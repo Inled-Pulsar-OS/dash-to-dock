@@ -623,6 +623,7 @@ export const DockAbstractAppIcon = GObject.registerClass({
                 } else {
                     // Activate the first window
                     const [w] = windows;
+                    this.animateLaunch();
                     Main.activateWindow(w);
                 }
                 break;
@@ -636,6 +637,7 @@ export const DockAbstractAppIcon = GObject.registerClass({
                 } else {
                     // Activate the first window
                     const [w] = windows;
+                    this.animateLaunch();
                     Main.activateWindow(w);
                 }
                 break;

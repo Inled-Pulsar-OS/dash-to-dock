@@ -728,15 +728,15 @@ export const DockDash = GObject.registerClass({
         const appIcons = this.getAppIcons();
 
         // Effective distance of magnification influence in px
-        const spreadRadius = (this.iconSize || 48) * 2.8;
+        const spreadRadius = (this.iconSize || 48) * 2.5;
 
-        appIcons.forEach(icon => {
-            if (!icon.mapped)
+        // First pass: compute target scale and vertical lift for each icon
+        const iconData = [];
+        appIcons.forEach((icon, idx) => {
+            if (!icon.mapped) {
+                iconData.push({icon, scale: 1.0, transX: 0, transY: 0, spreadOffset: 0});
                 return;
-
-            const iconBin = icon.icon?._iconBin ?? icon.icon;
-            if (!iconBin)
-                return;
+            }
 
             const [x, y] = icon.get_transformed_position();
             const [w, h] = icon.get_transformed_size();
@@ -752,12 +752,12 @@ export const DockDash = GObject.registerClass({
             let transX = 0;
 
             if (distance < spreadRadius) {
-                // Cosine curve for macOS-like fisheye
+                // Smooth cosine curve
                 const factor = (1 + Math.cos((Math.PI * distance) / spreadRadius)) / 2;
                 scale = 1.0 + (maxFactor - 1.0) * factor;
 
-                // macOS dock lifts icons upward when bottom-docked
-                const lift = ((scale - 1.0) * (this.iconSize || 48)) / 2;
+                // Rise towards the outer edge
+                const lift = ((scale - 1.0) * (this.iconSize || 48)) * 0.7;
                 if (this._position === St.Side.BOTTOM) {
                     transY = -lift;
                 } else if (this._position === St.Side.TOP) {
@@ -769,12 +769,41 @@ export const DockDash = GObject.registerClass({
                 }
             }
 
+            iconData.push({icon, scale, transX, transY, spreadOffset: 0, idx, centerX, centerY});
+        });
+
+        // Second pass: lateral displacement (push neighbours away like dash2dock-lite & macOS)
+        for (let i = 0; i < iconData.length; i++) {
+            const data = iconData[i];
+            if (data.scale > 1.05) {
+                const extraWidth = (data.scale - 1.0) * (this.iconSize || 48) * 0.5;
+                for (let j = 0; j < i; j++)
+                    iconData[j].spreadOffset -= extraWidth * (1 / (i - j + 1));
+                for (let j = i + 1; j < iconData.length; j++)
+                    iconData[j].spreadOffset += extraWidth * (1 / (j - i + 1));
+            }
+        }
+
+        // Apply scales and translations
+        iconData.forEach(data => {
+            const iconBin = data.icon.icon?._iconBin ?? data.icon.icon ?? data.icon._previewBin ?? data.icon;
+            if (!iconBin)
+                return;
+
+            let finalTransX = data.transX;
+            let finalTransY = data.transY;
+
+            if (this._isHorizontal)
+                finalTransX += data.spreadOffset;
+            else
+                finalTransY += data.spreadOffset;
+
             iconBin.set_pivot_point(0.5, 0.5);
             iconBin.ease({
-                scale_x: scale,
-                scale_y: scale,
-                translation_x: transX,
-                translation_y: transY,
+                scale_x: data.scale,
+                scale_y: data.scale,
+                translation_x: finalTransX,
+                translation_y: finalTransY,
                 duration: 60,
                 mode: Clutter.AnimationMode.EASE_OUT_QUAD,
             });
@@ -784,7 +813,7 @@ export const DockDash = GObject.registerClass({
     _resetMagnification() {
         const appIcons = this.getAppIcons();
         appIcons.forEach(icon => {
-            const iconBin = icon.icon?._iconBin ?? icon.icon;
+            const iconBin = icon.icon?._iconBin ?? icon.icon ?? icon._previewBin ?? icon;
             if (iconBin) {
                 iconBin.ease({
                     scale_x: 1.0,
@@ -799,24 +828,26 @@ export const DockDash = GObject.registerClass({
     }
 
     /**
-     * Return an array with the "proper" appIcons currently in the dash
+     * Return an array with all interactive icons currently in the dash
      */
     getAppIcons() {
-        // Only consider children which are "proper"
-        // icons (i.e. ignoring drag placeholders) and which are not
-        // animating out (which means they will be destroyed at the end of
-        // the animation)
-        const iconChildren = this._box.get_children().filter(actor => {
-            return actor.child &&
-                   !!actor.child.icon &&
-                   !actor.animatingOut;
+        const result = [];
+        const children = this._box.get_children();
+        children.forEach(actor => {
+            if (actor.animatingOut)
+                return;
+            if (actor.child && actor.child.icon) {
+                result.push(actor.child);
+            } else if (actor instanceof DockMinimizedWindowItem) {
+                result.push(actor);
+            }
         });
 
-        const appIcons = iconChildren.map(actor => {
-            return actor.child;
-        });
+        if (this._showAppsIcon && this._showAppsIcon.visible) {
+            result.push(this._showAppsIcon);
+        }
 
-        return appIcons;
+        return result;
     }
 
     _itemMenuStateChanged(item, opened) {
