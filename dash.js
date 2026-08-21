@@ -791,8 +791,10 @@ export const DockDash = GObject.registerClass({
 
         // Apply scales and translations
         iconData.forEach(data => {
-            const iconBin = data.icon.icon?._iconBin ?? data.icon.icon ?? data.icon._previewBin ?? data.icon;
-            if (!iconBin)
+            const targetActor = data.icon.get_parent() instanceof DockDashItemContainer
+                ? data.icon.get_parent()
+                : (data.icon.icon?._iconBin ?? data.icon.icon ?? data.icon._previewBin ?? data.icon);
+            if (!targetActor)
                 return;
 
             let finalTransX = data.transX;
@@ -803,8 +805,8 @@ export const DockDash = GObject.registerClass({
             else
                 finalTransY += data.spreadOffset;
 
-            iconBin.set_pivot_point(0.5, 0.5);
-            iconBin.ease({
+            targetActor.set_pivot_point(0.5, 0.5);
+            targetActor.ease({
                 scale_x: data.scale,
                 scale_y: data.scale,
                 translation_x: finalTransX,
@@ -818,9 +820,11 @@ export const DockDash = GObject.registerClass({
     _resetMagnification() {
         const appIcons = this.getAppIcons();
         appIcons.forEach(icon => {
-            const iconBin = icon.icon?._iconBin ?? icon.icon ?? icon._previewBin ?? icon;
-            if (iconBin) {
-                iconBin.ease({
+            const targetActor = icon.get_parent() instanceof DockDashItemContainer
+                ? icon.get_parent()
+                : (icon.icon?._iconBin ?? icon.icon ?? icon._previewBin ?? icon);
+            if (targetActor) {
+                targetActor.ease({
                     scale_x: 1.0,
                     scale_y: 1.0,
                     translation_x: 0,

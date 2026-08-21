@@ -767,8 +767,9 @@ export const DockAbstractAppIcon = GObject.registerClass({
             if (iconBin && !this._bouncing) {
                 this._bouncing = true;
 
-                const travel = (this.iconSize || 48) * 0.55;
-                const t = 200;
+                const travel = 28;
+                const riseTime = 380;
+                const dropTime = 580;
                 let bounceIteration = 0;
                 const maxIterations = 3;
 
@@ -777,7 +778,7 @@ export const DockAbstractAppIcon = GObject.registerClass({
                         this._bouncing = false;
                         iconBin.ease({
                             translation_y: 0,
-                            duration: 120,
+                            duration: 200,
                             mode: Clutter.AnimationMode.EASE_OUT_QUAD,
                         });
                         return;
@@ -785,16 +786,16 @@ export const DockAbstractAppIcon = GObject.registerClass({
 
                     bounceIteration++;
 
-                    // Phase 1: Rise up linearly
+                    // Phase 1: Rise smoothly up
                     iconBin.ease({
                         translation_y: -travel,
-                        duration: t,
+                        duration: riseTime,
                         mode: Clutter.AnimationMode.EASE_OUT_QUAD,
                         onComplete: () => {
-                            // Phase 2: Bounce fall-off with elastic bounce out
+                            // Phase 2: Elastic bounce down
                             iconBin.ease({
                                 translation_y: 0,
-                                duration: t * 2.2,
+                                duration: dropTime,
                                 mode: Clutter.AnimationMode.EASE_OUT_BOUNCE,
                                 onComplete: () => {
                                     if (this._bouncing && bounceIteration < maxIterations) {
@@ -1097,14 +1098,14 @@ const DockLocationAppIcon = GObject.registerClass({
         const centerX = originX + originW / 2;
         const centerY = originY + originH / 2;
 
-        const maxItems = Math.min(files.length, 7);
-        if (maxItems === 0) {
-            this.app.activate();
-            return;
-        }
+        const maxFiles = 8;
+        const recentFiles = files.slice(0, maxFiles);
 
-        const iconSize = 56;
-        const itemSpacing = iconSize + 12;
+        // Arc geometry matching macOS / dash2dock-lite
+        const count = recentFiles.length + 1; // +1 for "Open in Finder" item
+        const angleInc = 10.5; // degrees per item
+        const startAngle = 270 - ((count - 1) / 2) * angleInc;
+        const rad = 72; // step distance
 
         const backdrop = new St.Widget({
             reactive: true,
@@ -1119,62 +1120,81 @@ const DockLocationAppIcon = GObject.registerClass({
         });
         this._fanContainer.add_child(backdrop);
 
-        for (let i = 0; i < maxItems; i++) {
-            const fileItem = files[i];
-            const targetX = centerX - iconSize / 2;
-            const targetY = originY - (i + 1) * itemSpacing;
+        // Render Open in Finder / Files button as first/topmost or base item
+        const allItems = [
+            {
+                name: _('Open in Files'),
+                isAction: true,
+                icon: 'system-file-manager-symbolic',
+                action: () => {
+                    this._closeFan();
+                    this.app.activate();
+                },
+            },
+            ...recentFiles.map(f => ({
+                name: f.name,
+                isAction: false,
+                icon: f.icon,
+                action: () => {
+                    this._closeFan();
+                    Gio.AppInfo.launch_default_for_uri(f.uri,
+                        global.create_app_launch_context(global.get_current_time(), -1));
+                },
+            })),
+        ];
+
+        let currAngle = startAngle;
+        let currRadius = 60;
+
+        for (let i = 0; i < allItems.length; i++) {
+            const itemData = allItems[i];
+            const angleRad = currAngle * (Math.PI / 180);
+            
+            const targetX = centerX + Math.cos(angleRad) * currRadius - 24;
+            const targetY = centerY + Math.sin(angleRad) * currRadius - 24;
+            currAngle += angleInc;
+            currRadius += 40;
+
+            const itemWidget = new St.Widget({
+                reactive: true,
+                x: centerX - 24,
+                y: centerY - 24,
+                opacity: 0,
+            });
 
             const button = new St.Button({
-                style_class: 'overview-tile',
+                style_class: itemData.isAction ? 'overview-tile' : 'app-well-app',
                 reactive: true,
                 can_focus: true,
                 track_hover: true,
-                x: centerX - iconSize / 2,
-                y: originY,
-                width: iconSize,
-                height: iconSize,
-                opacity: 0,
+                width: 48,
+                height: 48,
             });
 
             const iconWidget = new St.Icon({
-                icon_name: fileItem.icon,
-                icon_size: iconSize,
+                icon_name: itemData.icon,
+                icon_size: 40,
             });
             button.set_child(iconWidget);
-
-            const shortName = (fileItem.name ?? '').length > 28
-                ? `${fileItem.name.substring(0, 25)}…`
-                : fileItem.name;
+            button.connect('clicked', itemData.action);
 
             const label = new St.Label({
                 style_class: 'dash-label',
-                text: shortName,
-                opacity: 0,
+                text: itemData.name,
+                y_align: Clutter.ActorAlign.CENTER,
             });
-            this._fanContainer.add_child(label);
+            label.set_position(56, 10);
 
-            button.connect('notify::hover', () => {
-                label.opacity = button.hover ? 255 : 0;
-                if (button.hover) {
-                    const [bx, by] = button.get_transformed_position();
-                    label.set_position(bx + iconSize + 12, by + (iconSize - label.height) / 2);
-                }
-            });
+            itemWidget.add_child(button);
+            itemWidget.add_child(label);
+            this._fanContainer.add_child(itemWidget);
 
-            button.connect('clicked', () => {
-                this._closeFan();
-                Gio.AppInfo.launch_default_for_uri(fileItem.uri,
-                    global.create_app_launch_context(global.get_current_time(), -1));
-            });
-
-            this._fanContainer.add_child(button);
-
-            // Animate items rising up nicely with slight stagger
-            button.ease({
+            // Animate arc ejection
+            itemWidget.ease({
                 x: targetX,
                 y: targetY,
                 opacity: 255,
-                duration: 220 + i * 30,
+                duration: 260 + i * 35,
                 mode: Clutter.AnimationMode.EASE_OUT_QUAD,
             });
         }
