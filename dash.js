@@ -123,9 +123,17 @@ class DockMinimizedWindowItem extends St.Button {
 
         this._updateThumbnail();
 
+        // Refresh thumbnail after layout completes in case window texture is ready later
+        GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+            if (this.mapped)
+                this._updateThumbnail();
+            return GLib.SOURCE_REMOVE;
+        });
+
         this.connect('clicked', () => {
-            if (this.metaWindow)
+            if (this.metaWindow) {
                 Main.activateWindow(this.metaWindow);
+            }
         });
 
         this._destroyId = this.metaWindow.connect('unmanaged', () => {
@@ -134,6 +142,9 @@ class DockMinimizedWindowItem extends St.Button {
     }
 
     _updateThumbnail() {
+        const tracker = Shell.WindowTracker.get_default();
+        const app = tracker.get_window_app(this.metaWindow);
+
         const mutterWindow = this.metaWindow?.get_compositor_private();
         if (mutterWindow && mutterWindow.get_texture()) {
             const clone = new Clutter.Clone({
@@ -142,15 +153,36 @@ class DockMinimizedWindowItem extends St.Button {
             });
             const [w, h] = mutterWindow.get_size();
             if (w > 0 && h > 0) {
-                const scale = Math.min(this.iconSize / w, this.iconSize / h);
-                clone.set_size(Math.round(w * scale), Math.round(h * scale));
-                this._previewBin.set_child(clone);
+                const padding = 6;
+                const availableSize = Math.max(16, this.iconSize - padding);
+                const scale = Math.min(availableSize / w, availableSize / h);
+                const cloneWidth = Math.max(16, Math.round(w * scale));
+                const cloneHeight = Math.max(16, Math.round(h * scale));
+                clone.set_size(cloneWidth, cloneHeight);
+
+                const container = new St.Widget({
+                    layout_manager: new Clutter.BinLayout(),
+                    width: this.iconSize,
+                    height: this.iconSize,
+                });
+                container.add_child(clone);
+
+                // Small mini app icon emblem in the corner like macOS
+                if (app) {
+                    const emblemSize = Math.round(this.iconSize * 0.35);
+                    const miniIcon = app.create_icon_texture(emblemSize);
+                    miniIcon.set({
+                        x_align: Clutter.ActorAlign.END,
+                        y_align: Clutter.ActorAlign.END,
+                    });
+                    container.add_child(miniIcon);
+                }
+
+                this._previewBin.set_child(container);
                 return;
             }
         }
 
-        const tracker = Shell.WindowTracker.get_default();
-        const app = tracker.get_window_app(this.metaWindow);
         const icon = app ? app.create_icon_texture(this.iconSize) : new St.Icon({
             icon_name: 'window-new-symbolic',
             icon_size: this.iconSize,
@@ -356,10 +388,21 @@ export const DockDash = GObject.registerClass({
         ], [
             global.display,
             'window-created',
-            () => this._queueRedisplay(),
+            (_display, window) => {
+                window.connectObject('notify::minimized', () => this._queueRedisplay(), this);
+                this._queueRedisplay();
+            },
         ], [
             global.display,
             'restacked',
+            () => this._queueRedisplay(),
+        ], [
+            global.window_manager,
+            'minimize',
+            () => this._queueRedisplay(),
+        ], [
+            global.window_manager,
+            'unminimize',
             () => this._queueRedisplay(),
         ], [
             global.workspace_manager,
@@ -547,45 +590,49 @@ export const DockDash = GObject.registerClass({
     }
 
     _onScrollEvent(actor, event) {
-        // If scroll is not used because the icon is resized, let the scroll event propagate.
-        if (!Docking.DockManager.settings.iconSizeFixed)
-            return Clutter.EVENT_PROPAGATE;
-
-        // reset timeout to avid conflicts with the mousehover event
+        // reset timeout to avoid conflicts with the mousehover event
         this._ensureItemVisibility(null);
-
-        // Skip to avoid double events mouse
-        if (event.get_scroll_direction() !== Clutter.ScrollDirection.SMOOTH)
-            return Clutter.EVENT_STOP;
-
 
         let adjustment, delta = 0;
 
         if (this._isHorizontal) {
             adjustment = this._scrollView.get_hadjustment
                 ? this._scrollView.get_hadjustment()
-                : this._scrollView.get_hscroll_bar().get_adjustment();
+                : this._scrollView.get_hscroll_bar()?.get_adjustment();
         } else {
             adjustment = this._scrollView.get_vadjustment
                 ? this._scrollView.get_vadjustment()
-                : this._scrollView.get_vscroll_bar().get_adjustment();
+                : this._scrollView.get_vscroll_bar()?.get_adjustment();
         }
 
-        const increment = adjustment.step_increment;
-        const [dx, dy] = event.get_scroll_delta();
+        if (!adjustment)
+            return Clutter.EVENT_PROPAGATE;
+
+        const increment = adjustment.step_increment || 30;
+        let dx = 0, dy = 0;
+
+        if (event.get_scroll_direction() === Clutter.ScrollDirection.SMOOTH) {
+            [dx, dy] = event.get_scroll_delta();
+        } else if (event.get_scroll_direction() === Clutter.ScrollDirection.UP) {
+            dy = -1;
+        } else if (event.get_scroll_direction() === Clutter.ScrollDirection.DOWN) {
+            dy = 1;
+        }
 
         if (this._isHorizontal)
             delta = (Math.abs(dx) > Math.abs(dy) ? dx : dy) * increment;
         else
             delta = dy * increment;
 
-        const value = adjustment.get_value();
+        if (delta === 0)
+            return Clutter.EVENT_PROPAGATE;
 
-        // TODO: Remove this if possible.
-        if (Number.isNaN(value))
-            adjustment.set_value(delta);
-        else
-            adjustment.set_value(value + delta);
+        const value = adjustment.get_value();
+        const lower = adjustment.get_lower();
+        const upper = adjustment.get_upper() - adjustment.get_page_size();
+
+        const newValue = Math.min(Math.max(value + delta, lower), Math.max(lower, upper));
+        adjustment.set_value(newValue);
 
         return Clutter.EVENT_STOP;
     }
@@ -681,7 +728,7 @@ export const DockDash = GObject.registerClass({
         const appIcons = this.getAppIcons();
 
         // Effective distance of magnification influence in px
-        const spreadRadius = (this.iconSize || 48) * 2.2;
+        const spreadRadius = (this.iconSize || 48) * 2.8;
 
         appIcons.forEach(icon => {
             if (!icon.mapped)
@@ -690,8 +737,6 @@ export const DockDash = GObject.registerClass({
             const iconBin = icon.icon?._iconBin ?? icon.icon;
             if (!iconBin)
                 return;
-
-            iconBin.set_pivot_point(0.5, 0.5);
 
             const [x, y] = icon.get_transformed_position();
             const [w, h] = icon.get_transformed_size();
@@ -703,16 +748,33 @@ export const DockDash = GObject.registerClass({
                 : Math.abs(pointerY - centerY);
 
             let scale = 1.0;
+            let transY = 0;
+            let transX = 0;
+
             if (distance < spreadRadius) {
-                // Cosine curve for smooth, natural magnification
-                const cosineFactor = (1 + Math.cos((Math.PI * distance) / spreadRadius)) / 2;
-                scale = 1.0 + (maxFactor - 1.0) * cosineFactor;
+                // Cosine curve for macOS-like fisheye
+                const factor = (1 + Math.cos((Math.PI * distance) / spreadRadius)) / 2;
+                scale = 1.0 + (maxFactor - 1.0) * factor;
+
+                // macOS dock lifts icons upward when bottom-docked
+                const lift = ((scale - 1.0) * (this.iconSize || 48)) / 2;
+                if (this._position === St.Side.BOTTOM) {
+                    transY = -lift;
+                } else if (this._position === St.Side.TOP) {
+                    transY = lift;
+                } else if (this._position === St.Side.LEFT) {
+                    transX = lift;
+                } else if (this._position === St.Side.RIGHT) {
+                    transX = -lift;
+                }
             }
 
-            // Apply scale with quick ease
+            iconBin.set_pivot_point(0.5, 0.5);
             iconBin.ease({
                 scale_x: scale,
                 scale_y: scale,
+                translation_x: transX,
+                translation_y: transY,
                 duration: 60,
                 mode: Clutter.AnimationMode.EASE_OUT_QUAD,
             });
@@ -727,7 +789,9 @@ export const DockDash = GObject.registerClass({
                 iconBin.ease({
                     scale_x: 1.0,
                     scale_y: 1.0,
-                    duration: 150,
+                    translation_x: 0,
+                    translation_y: 0,
+                    duration: 180,
                     mode: Clutter.AnimationMode.EASE_OUT_QUAD,
                 });
             }

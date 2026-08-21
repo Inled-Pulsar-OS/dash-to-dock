@@ -760,29 +760,56 @@ export const DockAbstractAppIcon = GObject.registerClass({
 
     animateLaunch() {
         super.animateLaunch?.();
-        if (Docking.DockManager.settings.animateLaunchBounce && this.iconAnimator) {
+        if (Docking.DockManager.settings.animateLaunchBounce) {
             const iconBin = this.icon?._iconBin ?? this.icon;
             if (iconBin && !this._bouncing) {
                 this._bouncing = true;
-                this.iconAnimator.addAnimation(iconBin, 'bounce');
-                const stopBounce = () => {
-                    if (this._bouncing) {
+                const bounceHeight = -26;
+                const bounceDuration = 220;
+                let bounceCount = 0;
+                const maxBounces = 4;
+
+                const doBounce = () => {
+                    if (!this._bouncing || bounceCount >= maxBounces) {
                         this._bouncing = false;
-                        this.iconAnimator.removeAnimation(iconBin, 'bounce');
-                        iconBin.translation_y = 0;
+                        iconBin.ease({
+                            translation_y: 0,
+                            duration: 150,
+                            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                        });
+                        return;
                     }
+
+                    bounceCount++;
+                    // Bounce up
+                    iconBin.ease({
+                        translation_y: bounceHeight,
+                        duration: bounceDuration,
+                        mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                        onComplete: () => {
+                            // Bounce down
+                            iconBin.ease({
+                                translation_y: 0,
+                                duration: bounceDuration,
+                                mode: Clutter.AnimationMode.EASE_IN_QUAD,
+                                onComplete: () => {
+                                    if (this._bouncing && bounceCount < maxBounces) {
+                                        doBounce();
+                                    } else {
+                                        this._bouncing = false;
+                                    }
+                                },
+                            });
+                        },
+                    });
                 };
-                // Stop bounce when windows appear or after a reasonable timeout
+
+                doBounce();
+
+                // Stop bounce when windows appear
                 const connId = this.app.connect('windows-changed', () => {
                     this.app.disconnect(connId);
-                    stopBounce();
-                });
-                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 3500, () => {
-                    try {
-                        this.app.disconnect(connId);
-                    } catch {}
-                    stopBounce();
-                    return GLib.SOURCE_REMOVE;
+                    this._bouncing = false;
                 });
             }
         }
