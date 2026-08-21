@@ -1142,26 +1142,22 @@ const DockLocationAppIcon = GObject.registerClass({
             },
         ];
 
-        // Curve upward-left towards screen center (from ~270deg down to ~200deg)
         const totalItems = allItems.length;
-        const startDeg = -90; // straight up
-        const endDeg = -160;  // curving left
-        const degStep = totalItems > 1 ? (endDeg - startDeg) / (totalItems - 1) : 0;
-        const baseRadius = 75;
-        const radiusStep = 38;
+        const iconSize = 46;
+        const itemSpacing = 52;
 
         for (let i = 0; i < totalItems; i++) {
             const itemData = allItems[i];
-            const angleRad = (startDeg + i * degStep) * (Math.PI / 180);
-            const radius = baseRadius + i * radiusStep;
             
-            const targetX = centerX + Math.cos(angleRad) * radius - 24;
-            const targetY = centerY + Math.sin(angleRad) * radius - 24;
+            // Subtly curved upwards: slight arc xOffset ~ 2.5px per item
+            const curveOffset = Math.sin((i / Math.max(1, totalItems - 1)) * (Math.PI / 2)) * 14;
+            const targetX = centerX - iconSize / 2 - curveOffset;
+            const targetY = originY - (i + 1) * itemSpacing;
 
             const itemWidget = new St.Widget({
                 reactive: true,
-                x: centerX - 24,
-                y: centerY - 24,
+                x: centerX - iconSize / 2,
+                y: originY,
                 opacity: 0,
             });
 
@@ -1170,13 +1166,13 @@ const DockLocationAppIcon = GObject.registerClass({
                 reactive: true,
                 can_focus: true,
                 track_hover: true,
-                width: 48,
-                height: 48,
+                width: iconSize,
+                height: iconSize,
             });
 
             const iconWidget = new St.Icon({
                 icon_name: itemData.icon,
-                icon_size: 40,
+                icon_size: iconSize - 6,
             });
             button.set_child(iconWidget);
             button.connect('clicked', itemData.action);
@@ -1186,19 +1182,21 @@ const DockLocationAppIcon = GObject.registerClass({
                 text: itemData.name,
                 y_align: Clutter.ActorAlign.CENTER,
             });
-            // Position label to the left of the icon
-            label.set_position(-label.get_preferred_width(-1)[1] - 8, 12);
 
             itemWidget.add_child(button);
             itemWidget.add_child(label);
             this._fanContainer.add_child(itemWidget);
 
-            // Animate arc ejection
+            // Calculate label width dynamically
+            const labelWidth = label.get_preferred_width(-1)[1];
+            label.set_position(-labelWidth - 10, (iconSize - label.get_preferred_height(-1)[1]) / 2);
+
+            // Animate ejection
             itemWidget.ease({
                 x: targetX,
                 y: targetY,
                 opacity: 255,
-                duration: 260 + i * 35,
+                duration: 200 + i * 28,
                 mode: Clutter.AnimationMode.EASE_OUT_QUAD,
             });
         }

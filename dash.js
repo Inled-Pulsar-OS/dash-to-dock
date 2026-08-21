@@ -789,7 +789,7 @@ export const DockDash = GObject.registerClass({
             }
         }
 
-        // Apply scales and translations directly to the visual icon actor so layout allocation of the dock bar stays constant
+        // Apply scales and translations directly to the visual icon actor
         iconData.forEach(data => {
             const targetActor = data.icon.icon?._iconBin ?? data.icon.icon ?? data.icon._previewBin ?? data.icon;
             if (!targetActor)
@@ -803,12 +803,18 @@ export const DockDash = GObject.registerClass({
             else
                 finalTransY += data.spreadOffset;
 
-            targetActor.set_pivot_point(0.5, 0.5);
+            // Pivot from bottom center (0.5, 1.0) for bottom dock so it scales upwards naturally
+            if (this._position === St.Side.BOTTOM) {
+                targetActor.set_pivot_point(0.5, 0.9);
+            } else {
+                targetActor.set_pivot_point(0.5, 0.5);
+            }
+
             targetActor.ease({
                 scale_x: data.scale,
                 scale_y: data.scale,
                 translation_x: finalTransX,
-                translation_y: finalTransY,
+                translation_y: finalTransY * 0.3,
                 duration: 60,
                 mode: Clutter.AnimationMode.EASE_OUT_QUAD,
             });
