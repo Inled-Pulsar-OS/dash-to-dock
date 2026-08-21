@@ -1182,6 +1182,7 @@ const DockLocationAppIcon = GObject.registerClass({
             return;
         this._fanContainer.remove_all_children();
     }
+});
 
 /**
  * @param app
