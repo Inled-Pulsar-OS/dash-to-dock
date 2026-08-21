@@ -122,6 +122,15 @@ export const DockAbstractAppIcon = GObject.registerClass({
     _init(app, monitorIndex, iconAnimator) {
         super._init(app);
 
+        this.clip_to_allocation = false;
+        if (this.icon) {
+            this.icon.clip_to_allocation = false;
+            if (this.icon._iconBin)
+                this.icon._iconBin.clip_to_allocation = false;
+            if (this.icon._iconContainer)
+                this.icon._iconContainer.clip_to_allocation = false;
+        }
+
         // a prefix is required to avoid conflicting with the parent class variable
         this.monitorIndex = monitorIndex;
         this._signalsHandler = new Utils.GlobalSignalsHandler(this);
@@ -767,9 +776,9 @@ export const DockAbstractAppIcon = GObject.registerClass({
             if (iconBin && !this._bouncing) {
                 this._bouncing = true;
 
-                const travel = 28;
-                const riseTime = 380;
-                const dropTime = 580;
+                const travel = (this.iconSize || 48) * 0.6;
+                const riseTime = 300;
+                const dropTime = 900;
                 let bounceIteration = 0;
                 const maxIterations = 3;
 
@@ -786,13 +795,13 @@ export const DockAbstractAppIcon = GObject.registerClass({
 
                     bounceIteration++;
 
-                    // Phase 1: Rise smoothly up
+                    // Phase 1: Rise up linearly
                     iconBin.ease({
                         translation_y: -travel,
                         duration: riseTime,
-                        mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                        mode: Clutter.AnimationMode.LINEAR,
                         onComplete: () => {
-                            // Phase 2: Elastic bounce down
+                            // Phase 2: Bounce ease out over 3x duration
                             iconBin.ease({
                                 translation_y: 0,
                                 duration: dropTime,
@@ -1181,6 +1190,7 @@ const DockLocationAppIcon = GObject.registerClass({
                 style_class: 'dash-label',
                 text: itemData.name,
                 y_align: Clutter.ActorAlign.CENTER,
+                opacity: 0,
             });
 
             itemWidget.add_child(button);
@@ -1189,7 +1199,24 @@ const DockLocationAppIcon = GObject.registerClass({
 
             // Calculate label width dynamically
             const labelWidth = label.get_preferred_width(-1)[1];
-            label.set_position(-labelWidth - 10, (iconSize - label.get_preferred_height(-1)[1]) / 2);
+            label.set_position(-labelWidth - 14, (iconSize - label.get_preferred_height(-1)[1]) / 2);
+
+            // Hover zoom and label reveal on mouse over
+            button.connect('notify::hover', () => {
+                const isHovered = button.hover;
+                label.ease({
+                    opacity: isHovered ? 255 : 0,
+                    duration: 150,
+                    mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                });
+                button.set_pivot_point(0.5, 0.5);
+                button.ease({
+                    scale_x: isHovered ? 1.25 : 1.0,
+                    scale_y: isHovered ? 1.25 : 1.0,
+                    duration: 150,
+                    mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                });
+            });
 
             // Animate ejection
             itemWidget.ease({

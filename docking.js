@@ -228,6 +228,7 @@ const DockedDash = GObject.registerClass({
         super._init({
             ...params,
             name: 'dashtodockContainer',
+            clip_to_allocation: false,
             reactive: false,
             style_class: Theming.PositionStyleClass[this._position],
         });
