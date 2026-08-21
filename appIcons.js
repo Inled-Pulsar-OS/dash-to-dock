@@ -763,12 +763,12 @@ export const DockAbstractAppIcon = GObject.registerClass({
     animateLaunch() {
         super.animateLaunch?.();
         if (Docking.DockManager.settings.animateLaunchBounce) {
-            const iconBin = this.icon?._iconBin ?? this.icon;
+            const iconBin = this.icon?._iconBin ?? this.icon?._iconContainer ?? this.icon;
             if (iconBin && !this._bouncing) {
                 this._bouncing = true;
 
                 const travel = (this.iconSize || 48) * 0.55;
-                const t = 220;
+                const t = 200;
                 let bounceIteration = 0;
                 const maxIterations = 3;
 
@@ -777,7 +777,7 @@ export const DockAbstractAppIcon = GObject.registerClass({
                         this._bouncing = false;
                         iconBin.ease({
                             translation_y: 0,
-                            duration: 100,
+                            duration: 120,
                             mode: Clutter.AnimationMode.EASE_OUT_QUAD,
                         });
                         return;
@@ -789,12 +789,12 @@ export const DockAbstractAppIcon = GObject.registerClass({
                     iconBin.ease({
                         translation_y: -travel,
                         duration: t,
-                        mode: Clutter.AnimationMode.LINEAR,
+                        mode: Clutter.AnimationMode.EASE_OUT_QUAD,
                         onComplete: () => {
                             // Phase 2: Bounce fall-off with elastic bounce out
                             iconBin.ease({
                                 translation_y: 0,
-                                duration: t * 2.5,
+                                duration: t * 2.2,
                                 mode: Clutter.AnimationMode.EASE_OUT_BOUNCE,
                                 onComplete: () => {
                                     if (this._bouncing && bounceIteration < maxIterations) {
@@ -1103,10 +1103,8 @@ const DockLocationAppIcon = GObject.registerClass({
             return;
         }
 
-        const arcRadius = (this.icon?.iconSize || 48) * 3.2;
-        const startAngle = -135; // degrees
-        const endAngle = -45;
-        const angleStep = maxItems > 1 ? (endAngle - startAngle) / (maxItems - 1) : 0;
+        const iconSize = 56;
+        const itemSpacing = iconSize + 12;
 
         const backdrop = new St.Widget({
             reactive: true,
@@ -1123,29 +1121,34 @@ const DockLocationAppIcon = GObject.registerClass({
 
         for (let i = 0; i < maxItems; i++) {
             const fileItem = files[i];
-            const angle = (startAngle + i * angleStep) * (Math.PI / 180);
-            const targetX = centerX + Math.cos(angle) * arcRadius - (this.icon?.iconSize || 48) / 2;
-            const targetY = centerY + Math.sin(angle) * arcRadius - (this.icon?.iconSize || 48) / 2;
+            const targetX = centerX - iconSize / 2;
+            const targetY = originY - (i + 1) * itemSpacing;
 
             const button = new St.Button({
-                style_class: 'app-well-app',
+                style_class: 'overview-tile',
                 reactive: true,
                 can_focus: true,
                 track_hover: true,
-                x: centerX - (this.icon?.iconSize || 48) / 2,
-                y: centerY - (this.icon?.iconSize || 48) / 2,
+                x: centerX - iconSize / 2,
+                y: originY,
+                width: iconSize,
+                height: iconSize,
                 opacity: 0,
             });
 
             const iconWidget = new St.Icon({
                 icon_name: fileItem.icon,
-                icon_size: this.icon?.iconSize || 48,
+                icon_size: iconSize,
             });
             button.set_child(iconWidget);
 
+            const shortName = (fileItem.name ?? '').length > 28
+                ? `${fileItem.name.substring(0, 25)}…`
+                : fileItem.name;
+
             const label = new St.Label({
                 style_class: 'dash-label',
-                text: fileItem.name,
+                text: shortName,
                 opacity: 0,
             });
             this._fanContainer.add_child(label);
@@ -1154,7 +1157,7 @@ const DockLocationAppIcon = GObject.registerClass({
                 label.opacity = button.hover ? 255 : 0;
                 if (button.hover) {
                     const [bx, by] = button.get_transformed_position();
-                    label.set_position(bx - (label.width - button.width) / 2, by - label.height - 6);
+                    label.set_position(bx + iconSize + 12, by + (iconSize - label.height) / 2);
                 }
             });
 
@@ -1166,13 +1169,13 @@ const DockLocationAppIcon = GObject.registerClass({
 
             this._fanContainer.add_child(button);
 
-            // Animate fan items expanding outward
+            // Animate items rising up nicely with slight stagger
             button.ease({
                 x: targetX,
                 y: targetY,
                 opacity: 255,
-                duration: 250 + i * 35,
-                mode: Clutter.AnimationMode.EASE_OUT_BACK,
+                duration: 220 + i * 30,
+                mode: Clutter.AnimationMode.EASE_OUT_QUAD,
             });
         }
     }

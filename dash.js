@@ -48,7 +48,9 @@ const Labels = Object.freeze({
 const DockDashItemContainer = GObject.registerClass(
 class DockDashItemContainer extends Dash.DashItemContainer {
     _init(position) {
-        super._init();
+        super._init({
+            clip_to_allocation: false,
+        });
 
         this.label?.add_style_class_name(Theming.PositionStyleClass[position]);
         if (Docking.DockManager.settings.customThemeShrink)
