@@ -287,6 +287,7 @@ const DockedDash = GObject.registerClass({
         this._slider = new DashSlideContainer({
             monitor_index: this._monitor.index,
             side: this._position,
+            clip_to_allocation: false,
             slide_x: Main.layoutManager._startingUp ? 0 : 1,
             ...this._isHorizontal ? {
                 x_align: Clutter.ActorAlign.CENTER,
@@ -298,6 +299,7 @@ const DockedDash = GObject.registerClass({
         // This is the actor whose hover status us tracked for autohide
         this._box = new St.BoxLayout({
             name: 'dashtodockBox',
+            clip_to_allocation: false,
             reactive: true,
             track_hover: true,
         });

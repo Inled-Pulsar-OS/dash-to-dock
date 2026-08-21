@@ -244,7 +244,7 @@ export const DockDash = GObject.registerClass({
         // Initialize icon variables and size
         super._init({
             name: 'dash',
-            offscreen_redirect: Clutter.OffscreenRedirect.ALWAYS,
+            clip_to_allocation: false,
             layout_manager: new Clutter.BinLayout(),
         });
 
@@ -272,6 +272,7 @@ export const DockDash = GObject.registerClass({
 
         this._dashContainer = new St.BoxLayout({
             name: 'dashtodockDashContainer',
+            clip_to_allocation: false,
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
             vertical: !this._isHorizontal,
@@ -281,6 +282,7 @@ export const DockDash = GObject.registerClass({
 
         this._scrollView = new St.ScrollView({
             name: 'dashtodockDashScrollview',
+            clip_to_allocation: false,
             hscrollbar_policy: this._isHorizontal ? St.PolicyType.EXTERNAL : St.PolicyType.NEVER,
             vscrollbar_policy: this._isHorizontal ?  St.PolicyType.NEVER : St.PolicyType.EXTERNAL,
             x_expand: this._isHorizontal,
@@ -292,6 +294,7 @@ export const DockDash = GObject.registerClass({
 
         this._boxContainer = new St.BoxLayout({
             name: 'dashtodockBoxContainer',
+            clip_to_allocation: false,
             x_align: Clutter.ActorAlign.FILL,
             y_align: Clutter.ActorAlign.FILL,
             vertical: !this._isHorizontal,

@@ -766,37 +766,39 @@ export const DockAbstractAppIcon = GObject.registerClass({
             const iconBin = this.icon?._iconBin ?? this.icon;
             if (iconBin && !this._bouncing) {
                 this._bouncing = true;
-                const bounceHeight = -26;
-                const bounceDuration = 220;
-                let bounceCount = 0;
-                const maxBounces = 4;
 
-                const doBounce = () => {
-                    if (!this._bouncing || bounceCount >= maxBounces) {
+                const travel = (this.iconSize || 48) * 0.55;
+                const t = 220;
+                let bounceIteration = 0;
+                const maxIterations = 3;
+
+                const runBounceCycle = () => {
+                    if (!this._bouncing || bounceIteration >= maxIterations) {
                         this._bouncing = false;
                         iconBin.ease({
                             translation_y: 0,
-                            duration: 150,
+                            duration: 100,
                             mode: Clutter.AnimationMode.EASE_OUT_QUAD,
                         });
                         return;
                     }
 
-                    bounceCount++;
-                    // Bounce up
+                    bounceIteration++;
+
+                    // Phase 1: Rise up linearly
                     iconBin.ease({
-                        translation_y: bounceHeight,
-                        duration: bounceDuration,
-                        mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                        translation_y: -travel,
+                        duration: t,
+                        mode: Clutter.AnimationMode.LINEAR,
                         onComplete: () => {
-                            // Bounce down
+                            // Phase 2: Bounce fall-off with elastic bounce out
                             iconBin.ease({
                                 translation_y: 0,
-                                duration: bounceDuration,
-                                mode: Clutter.AnimationMode.EASE_IN_QUAD,
+                                duration: t * 2.5,
+                                mode: Clutter.AnimationMode.EASE_OUT_BOUNCE,
                                 onComplete: () => {
-                                    if (this._bouncing && bounceCount < maxBounces) {
-                                        doBounce();
+                                    if (this._bouncing && bounceIteration < maxIterations) {
+                                        runBounceCycle();
                                     } else {
                                         this._bouncing = false;
                                     }
@@ -806,7 +808,7 @@ export const DockAbstractAppIcon = GObject.registerClass({
                     });
                 };
 
-                doBounce();
+                runBounceCycle();
 
                 // Stop bounce when windows appear
                 const connId = this.app.connect('windows-changed', () => {
@@ -1040,19 +1042,146 @@ const DockLocationAppIcon = GObject.registerClass({
         this._signalsHandler.add(this.app, 'notify::icon', () => this.icon.update());
     }
 
-    get location() {
-        return this.app.location;
+    activate(button) {
+        if (this.app.isDownloads) {
+            this.showDownloadsFan();
+            return;
+        }
+        super.activate(button);
     }
 
-    _updateFocusState() {
-        if (Docking.DockManager.settings.isolateLocations) {
-            super._updateFocusState();
+    showDownloadsFan() {
+        if (this._fanMenu && this._fanMenu.isOpen) {
+            this._fanMenu.close();
             return;
         }
 
-        this.focused = this.app.isFocused && this.running;
+        const downloadsPath = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD) ??
+            GLib.build_filenamev([GLib.get_home_dir(), 'Downloads']);
+        const downloadsDir = Gio.file_new_for_path(downloadsPath);
+
+        const files = [];
+        try {
+            const enumerator = downloadsDir.enumerate_children(
+                'standard::name,standard::display-name,standard::icon,standard::content-type,time::modified',
+                Gio.FileQueryInfoFlags.NONE, null);
+            let info;
+            while ((info = enumerator.next_file(null)) !== null) {
+                const child = enumerator.get_child(info);
+                files.push({
+                    name: info.get_display_name(),
+                    path: child.get_path(),
+                    uri: child.get_uri(),
+                    icon: info.get_icon()?.get_names?.()?.[0] ?? 'text-x-generic',
+                    time: info.get_modification_date_time()?.to_unix() ?? 0,
+                });
+            }
+            enumerator.close(null);
+            files.sort((a, b) => b.time - a.time);
+        } catch (e) {
+            logError(e, 'Failed to read downloads directory');
+        }
+
+        if (!this._fanContainer) {
+            this._fanContainer = new St.Widget({
+                reactive: true,
+                clip_to_allocation: false,
+            });
+            Main.uiGroup.add_child(this._fanContainer);
+        }
+
+        this._fanContainer.remove_all_children();
+
+        const [originX, originY] = this.get_transformed_position();
+        const [originW, originH] = this.get_transformed_size();
+        const centerX = originX + originW / 2;
+        const centerY = originY + originH / 2;
+
+        const maxItems = Math.min(files.length, 7);
+        if (maxItems === 0) {
+            this.app.activate();
+            return;
+        }
+
+        const arcRadius = (this.icon?.iconSize || 48) * 3.2;
+        const startAngle = -135; // degrees
+        const endAngle = -45;
+        const angleStep = maxItems > 1 ? (endAngle - startAngle) / (maxItems - 1) : 0;
+
+        const backdrop = new St.Widget({
+            reactive: true,
+            x: 0,
+            y: 0,
+            width: global.stage.width,
+            height: global.stage.height,
+        });
+        backdrop.connect('button-press-event', () => {
+            this._closeFan();
+            return Clutter.EVENT_STOP;
+        });
+        this._fanContainer.add_child(backdrop);
+
+        for (let i = 0; i < maxItems; i++) {
+            const fileItem = files[i];
+            const angle = (startAngle + i * angleStep) * (Math.PI / 180);
+            const targetX = centerX + Math.cos(angle) * arcRadius - (this.icon?.iconSize || 48) / 2;
+            const targetY = centerY + Math.sin(angle) * arcRadius - (this.icon?.iconSize || 48) / 2;
+
+            const button = new St.Button({
+                style_class: 'app-well-app',
+                reactive: true,
+                can_focus: true,
+                track_hover: true,
+                x: centerX - (this.icon?.iconSize || 48) / 2,
+                y: centerY - (this.icon?.iconSize || 48) / 2,
+                opacity: 0,
+            });
+
+            const iconWidget = new St.Icon({
+                icon_name: fileItem.icon,
+                icon_size: this.icon?.iconSize || 48,
+            });
+            button.set_child(iconWidget);
+
+            const label = new St.Label({
+                style_class: 'dash-label',
+                text: fileItem.name,
+                opacity: 0,
+            });
+            this._fanContainer.add_child(label);
+
+            button.connect('notify::hover', () => {
+                label.opacity = button.hover ? 255 : 0;
+                if (button.hover) {
+                    const [bx, by] = button.get_transformed_position();
+                    label.set_position(bx - (label.width - button.width) / 2, by - label.height - 6);
+                }
+            });
+
+            button.connect('clicked', () => {
+                this._closeFan();
+                Gio.AppInfo.launch_default_for_uri(fileItem.uri,
+                    global.create_app_launch_context(global.get_current_time(), -1));
+            });
+
+            this._fanContainer.add_child(button);
+
+            // Animate fan items expanding outward
+            button.ease({
+                x: targetX,
+                y: targetY,
+                opacity: 255,
+                duration: 250 + i * 35,
+                mode: Clutter.AnimationMode.EASE_OUT_BACK,
+            });
+        }
     }
-});
+
+    _closeFan() {
+        if (!this._fanContainer)
+            return;
+        this._fanContainer.remove_all_children();
+    }
 
 /**
  * @param app
