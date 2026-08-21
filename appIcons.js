@@ -758,6 +758,36 @@ export const DockAbstractAppIcon = GObject.registerClass({
         return false;
     }
 
+    animateLaunch() {
+        super.animateLaunch?.();
+        if (Docking.DockManager.settings.animateLaunchBounce && this.iconAnimator) {
+            const iconBin = this.icon?._iconBin ?? this.icon;
+            if (iconBin && !this._bouncing) {
+                this._bouncing = true;
+                this.iconAnimator.addAnimation(iconBin, 'bounce');
+                const stopBounce = () => {
+                    if (this._bouncing) {
+                        this._bouncing = false;
+                        this.iconAnimator.removeAnimation(iconBin, 'bounce');
+                        iconBin.translation_y = 0;
+                    }
+                };
+                // Stop bounce when windows appear or after a reasonable timeout
+                const connId = this.app.connect('windows-changed', () => {
+                    this.app.disconnect(connId);
+                    stopBounce();
+                });
+                GLib.timeout_add(GLib.PRIORITY_DEFAULT, 3500, () => {
+                    try {
+                        this.app.disconnect(connId);
+                    } catch {}
+                    stopBounce();
+                    return GLib.SOURCE_REMOVE;
+                });
+            }
+        }
+    }
+
     // Try to do the right thing when attempting to launch a new window of an app. In
     // particular, if the application doesn't allow to launch a new window, activate
     // the existing window instead.
@@ -1099,6 +1129,56 @@ const DockAppIconMenu = class DockAppIconMenu extends PopupMenu.PopupMenu {
         this.addMenuItem(new PopupMenu.PopupSeparatorMenuItem(appItemLabel));
 
         const {app} = this.sourceActor;
+
+        if (app.isDownloads) {
+            const downloadsPath = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD) ??
+                GLib.build_filenamev([GLib.get_home_dir(), 'Downloads']);
+            const downloadsDir = Gio.file_new_for_path(downloadsPath);
+
+            const openFolderItem = this._appendMenuItem(__('Open in Files'));
+            openFolderItem.connect('activate', () => {
+                app.activate();
+                this.emit('activate-window', null);
+            });
+            this._appendSeparator();
+
+            try {
+                const enumerator = downloadsDir.enumerate_children(
+                    'standard::name,standard::display-name,standard::icon,time::modified',
+                    Gio.FileQueryInfoFlags.NONE, null);
+                const files = [];
+                let info;
+                while ((info = enumerator.next_file(null)) !== null) {
+                    files.push({
+                        name: info.get_display_name(),
+                        file: enumerator.get_child(info),
+                        time: info.get_modification_date_time()?.to_unix() ?? 0,
+                    });
+                }
+                enumerator.close(null);
+
+                files.sort((a, b) => b.time - a.time);
+                const recentFiles = files.slice(0, 7);
+
+                if (recentFiles.length > 0) {
+                    recentFiles.forEach(({name, file}) => {
+                        const item = this._appendMenuItem(name);
+                        item.connect('activate', () => {
+                            Gio.AppInfo.launch_default_for_uri(file.get_uri(),
+                                global.create_app_launch_context(global.get_current_time(), -1));
+                            this.emit('activate-window', null);
+                        });
+                    });
+                } else {
+                    const emptyItem = this._appendMenuItem(__('Folder is empty'));
+                    emptyItem.sensitive = false;
+                }
+            } catch (e) {
+                logError(e, 'Failed to list downloads directory');
+            }
+
+            return;
+        }
 
         if (Docking.DockManager.settings.showWindowsPreview) {
             // Display the app windows menu items and the separator between windows

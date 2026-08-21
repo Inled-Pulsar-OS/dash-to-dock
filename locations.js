@@ -880,6 +880,42 @@ class TrashAppInfo extends LocationAppInfo {
     }
 });
 
+const DownloadsAppInfo = GObject.registerClass({
+    Implements: [Gio.AppInfo],
+},
+class DownloadsAppInfo extends LocationAppInfo {
+    _init(cancellable = null) {
+        const downloadsPath = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD) ??
+            GLib.build_filenamev([GLib.get_home_dir(), 'Downloads']);
+        super._init({
+            location: Gio.file_new_for_path(downloadsPath),
+            name: __('Downloads'),
+            icon: Gio.ThemedIcon.new('folder-download'),
+            cancellable,
+        });
+    }
+
+    list_actions() {
+        return ['open-downloads'];
+    }
+
+    get_action_name(action) {
+        switch (action) {
+        case 'open-downloads':
+            return __('Open Downloads');
+        default:
+            return null;
+        }
+    }
+
+    launchAction(action, timestamp) {
+        if (action === 'open-downloads') {
+            this.launch([], global.create_app_launch_context(timestamp || global.get_current_time(), -1));
+        }
+    }
+});
+
+
 /**
  * @param shellApp
  */
@@ -1119,6 +1155,7 @@ function makeLocationApp(params) {
     shellApp._setDtdData({
         location: () => shellApp.appInfo.location,
         isTrash: shellApp.appInfo instanceof TrashAppInfo,
+        isDownloads: shellApp.appInfo instanceof DownloadsAppInfo,
     }, {getter: true, enumerable: true});
 
     shellApp._mi('toString', defaultToString =>
@@ -1505,6 +1542,30 @@ export class Removables {
 Signals.addSignalMethods(Removables.prototype);
 
 /**
+ * This class maintains a Shell.App representing the Downloads folder
+ */
+export class Downloads {
+    destroy() {
+        this._downloadsApp?.destroy();
+    }
+
+    _ensureApp() {
+        if (this._downloadsApp)
+            return;
+
+        this._downloadsApp = makeLocationApp({
+            appInfo: new DownloadsAppInfo(new Gio.Cancellable()),
+            fallbackIconName: 'folder-download',
+        });
+    }
+
+    getApp() {
+        this._ensureApp();
+        return this._downloadsApp;
+    }
+}
+
+/**
  *
  */
 function getApps() {
@@ -1513,6 +1574,9 @@ function getApps() {
 
     if (dockManager.removables)
         locationApps.push(...dockManager.removables.getApps());
+
+    if (dockManager.downloads)
+        locationApps.push(dockManager.downloads.getApp());
 
     if (dockManager.trash)
         locationApps.push(dockManager.trash.getApp());

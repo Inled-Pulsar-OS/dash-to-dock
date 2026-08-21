@@ -97,6 +97,78 @@ const DockDashIconsVerticalLayout = GObject.registerClass(
         }
     });
 
+const DockMinimizedWindowItem = GObject.registerClass(
+class DockMinimizedWindowItem extends St.Button {
+    _init(metaWindow, iconSize, isHorizontal) {
+        super._init({
+            style_class: 'app-well-app minimized-window-item',
+            reactive: true,
+            can_focus: true,
+            track_hover: true,
+        });
+
+        this.metaWindow = metaWindow;
+        this.iconSize = iconSize;
+        this._isHorizontal = isHorizontal;
+
+        const bin = new St.Bin({
+            x_align: Clutter.ActorAlign.CENTER,
+            y_align: Clutter.ActorAlign.CENTER,
+            width: iconSize,
+            height: iconSize,
+        });
+
+        this._previewBin = bin;
+        this.set_child(bin);
+
+        this._updateThumbnail();
+
+        this.connect('clicked', () => {
+            if (this.metaWindow)
+                Main.activateWindow(this.metaWindow);
+        });
+
+        this._destroyId = this.metaWindow.connect('unmanaged', () => {
+            this.destroy();
+        });
+    }
+
+    _updateThumbnail() {
+        const mutterWindow = this.metaWindow?.get_compositor_private();
+        if (mutterWindow && mutterWindow.get_texture()) {
+            const clone = new Clutter.Clone({
+                source: mutterWindow,
+                reactive: false,
+            });
+            const [w, h] = mutterWindow.get_size();
+            if (w > 0 && h > 0) {
+                const scale = Math.min(this.iconSize / w, this.iconSize / h);
+                clone.set_size(Math.round(w * scale), Math.round(h * scale));
+                this._previewBin.set_child(clone);
+                return;
+            }
+        }
+
+        const tracker = Shell.WindowTracker.get_default();
+        const app = tracker.get_window_app(this.metaWindow);
+        const icon = app ? app.create_icon_texture(this.iconSize) : new St.Icon({
+            icon_name: 'window-new-symbolic',
+            icon_size: this.iconSize,
+        });
+        this._previewBin.set_child(icon);
+    }
+
+    destroy() {
+        if (this._destroyId && this.metaWindow) {
+            try {
+                this.metaWindow.disconnect(this._destroyId);
+            } catch {}
+            this._destroyId = 0;
+        }
+        super.destroy();
+    }
+});
+
 
 const baseIconSizes = [16, 22, 24, 32, 48, 64, 96, 128];
 
@@ -191,8 +263,18 @@ export const DockDash = GObject.registerClass({
             x_align: Clutter.ActorAlign.FILL,
             y_align: Clutter.ActorAlign.FILL,
             vertical: !this._isHorizontal,
+            reactive: true,
         });
         this._boxContainer.add_style_class_name(Theming.PositionStyleClass[this._position]);
+
+        this._boxContainer.connect('motion-event', (_actor, event) => {
+            this._onDockMotionEvent(event);
+            return Clutter.EVENT_PROPAGATE;
+        });
+        this._boxContainer.connect('leave-event', () => {
+            this._resetMagnification();
+            return Clutter.EVENT_PROPAGATE;
+        });
 
         const rtl = Clutter.get_default_text_direction() === Clutter.TextDirection.RTL;
         this._box = new St.BoxLayout({
@@ -271,6 +353,18 @@ export const DockDash = GObject.registerClass({
             this._appSystem,
             'app-state-changed',
             this._queueRedisplay.bind(this),
+        ], [
+            global.display,
+            'window-created',
+            () => this._queueRedisplay(),
+        ], [
+            global.display,
+            'restacked',
+            () => this._queueRedisplay(),
+        ], [
+            global.workspace_manager,
+            'workspace-switched',
+            () => this._queueRedisplay(),
         ], [
             Main.overview,
             'item-drag-begin',
@@ -576,17 +670,68 @@ export const DockDash = GObject.registerClass({
         return item;
     }
 
-    _requireVisibility() {
-        this.requiresVisibility = true;
+    _onDockMotionEvent(event) {
+        if (!Docking.DockManager.settings.dockMagnification) {
+            this._resetMagnification();
+            return;
+        }
 
-        if (this._requiresVisibilityTimeout)
-            GLib.source_remove(this._requiresVisibilityTimeout);
+        const [pointerX, pointerY] = event.get_coords();
+        const maxFactor = Docking.DockManager.settings.magnificationSizeFactor || 1.6;
+        const appIcons = this.getAppIcons();
 
-        this._requiresVisibilityTimeout = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT,
-            DASH_VISIBILITY_TIMEOUT, () => {
-                this._requiresVisibilityTimeout = 0;
-                this.requiresVisibility = false;
+        // Effective distance of magnification influence in px
+        const spreadRadius = (this.iconSize || 48) * 2.2;
+
+        appIcons.forEach(icon => {
+            if (!icon.mapped)
+                return;
+
+            const iconBin = icon.icon?._iconBin ?? icon.icon;
+            if (!iconBin)
+                return;
+
+            iconBin.set_pivot_point(0.5, 0.5);
+
+            const [x, y] = icon.get_transformed_position();
+            const [w, h] = icon.get_transformed_size();
+            const centerX = x + w / 2;
+            const centerY = y + h / 2;
+
+            const distance = this._isHorizontal
+                ? Math.abs(pointerX - centerX)
+                : Math.abs(pointerY - centerY);
+
+            let scale = 1.0;
+            if (distance < spreadRadius) {
+                // Cosine curve for smooth, natural magnification
+                const cosineFactor = (1 + Math.cos((Math.PI * distance) / spreadRadius)) / 2;
+                scale = 1.0 + (maxFactor - 1.0) * cosineFactor;
+            }
+
+            // Apply scale with quick ease
+            iconBin.ease({
+                scale_x: scale,
+                scale_y: scale,
+                duration: 60,
+                mode: Clutter.AnimationMode.EASE_OUT_QUAD,
             });
+        });
+    }
+
+    _resetMagnification() {
+        const appIcons = this.getAppIcons();
+        appIcons.forEach(icon => {
+            const iconBin = icon.icon?._iconBin ?? icon.icon;
+            if (iconBin) {
+                iconBin.ease({
+                    scale_x: 1.0,
+                    scale_y: 1.0,
+                    duration: 150,
+                    mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                });
+            }
+        });
     }
 
     /**
@@ -826,7 +971,15 @@ export const DockDash = GObject.registerClass({
                     newApps.push(removable);
             });
         } else {
-            oldApps = oldApps.filter(app => !app.location || app.isTrash);
+            oldApps = oldApps.filter(app => !app.location || app.isTrash || app.isDownloads);
+        }
+
+        if (dockManager.downloads) {
+            const downloadsApp = dockManager.downloads.getApp();
+            if (!newApps.includes(downloadsApp))
+                newApps.push(downloadsApp);
+        } else {
+            oldApps = oldApps.filter(app => !app.isDownloads);
         }
 
         if (dockManager.trash) {
@@ -980,6 +1133,48 @@ export const DockDash = GObject.registerClass({
 
         // This will update the size, and the corresponding number for each icon
         this._updateNumberOverlay();
+
+        // Update Minimized Windows Section
+        if (this._minimizedSeparator) {
+            this._box.remove_child(this._minimizedSeparator);
+            this._minimizedSeparator.destroy();
+            this._minimizedSeparator = null;
+        }
+        if (this._minimizedWindowItems) {
+            this._minimizedWindowItems.forEach(item => {
+                this._box.remove_child(item);
+                item.destroy();
+            });
+            this._minimizedWindowItems = [];
+        }
+
+        if (Docking.DockManager.settings.showMinimizedWindows) {
+            const currentWorkspace = global.workspace_manager.get_active_workspace();
+            const allWindows = global.display.get_tab_list(Meta.TabList.NORMAL_ALL, currentWorkspace);
+            const minimizedWindows = allWindows.filter(w => w.minimized && !w.skip_taskbar);
+
+            if (minimizedWindows.length > 0) {
+                this._minimizedSeparator = new St.Widget({
+                    style_class: 'dash-separator',
+                    x_align: this._isHorizontal
+                        ? Clutter.ActorAlign.FILL : Clutter.ActorAlign.CENTER,
+                    y_align: this._isHorizontal
+                        ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.FILL,
+                    width: this._isHorizontal ? -1 : this.iconSize,
+                    height: this._isHorizontal ? this.iconSize : -1,
+                    reactive: true,
+                    track_hover: true,
+                });
+                this._box.add_child(this._minimizedSeparator);
+
+                this._minimizedWindowItems = [];
+                minimizedWindows.forEach(win => {
+                    const item = new DockMinimizedWindowItem(win, this.iconSize, this._isHorizontal);
+                    this._box.add_child(item);
+                    this._minimizedWindowItems.push(item);
+                });
+            }
+        }
 
         this.updateShowAppsButton();
     }

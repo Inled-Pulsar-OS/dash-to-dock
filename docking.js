@@ -573,6 +573,20 @@ const DockedDash = GObject.registerClass({
             Utils.SignalsHandlerFlags.CONNECT_AFTER,
         ], [
             settings,
+            'changed::show-downloads',
+            () => {
+                this.dash.resetAppIcons();
+            },
+            Utils.SignalsHandlerFlags.CONNECT_AFTER,
+        ], [
+            settings,
+            'changed::show-minimized-windows',
+            () => {
+                this.dash.resetAppIcons();
+            },
+            Utils.SignalsHandlerFlags.CONNECT_AFTER,
+        ], [
+            settings,
             'changed::show-mounts',
             () => {
                 this.dash.resetAppIcons();
@@ -1830,6 +1844,10 @@ export class DockManager {
         return this._trash;
     }
 
+    get downloads() {
+        return this._downloads;
+    }
+
     get desktopIconsUsableArea() {
         return this._desktopIconsUsableArea;
     }
@@ -1851,9 +1869,9 @@ export class DockManager {
     }
 
     _ensureLocations() {
-        const {showMounts, showTrash} = this.settings;
+        const {showMounts, showTrash, showDownloads} = this.settings;
 
-        if (showTrash || showMounts) {
+        if (showTrash || showMounts || showDownloads) {
             if (!this._fm1Client)
                 this._fm1Client = new FileManager1API.FileManager1Client();
         } else if (this._fm1Client) {
@@ -1866,6 +1884,13 @@ export class DockManager {
         } else if (!showMounts && this._removables) {
             this._removables.destroy();
             this._removables = null;
+        }
+
+        if (showDownloads && !this._downloads) {
+            this._downloads = new Locations.Downloads();
+        } else if (!showDownloads && this._downloads) {
+            this._downloads.destroy();
+            this._downloads = null;
         }
 
         if (showTrash && !this._trash) {
@@ -2032,6 +2057,10 @@ export class DockManager {
         ], [
             this._settings,
             'changed::show-trash',
+            () => this._ensureLocations(),
+        ], [
+            this._settings,
+            'changed::show-downloads',
             () => this._ensureLocations(),
         ], [
             this._settings,
@@ -2619,6 +2648,8 @@ export class DockManager {
         this._appSpread.destroy();
         this._trash?.destroy();
         this._trash = null;
+        this._downloads?.destroy();
+        this._downloads = null;
         Locations.unWrapFileManagerApp();
         this._removables?.destroy();
         this._removables = null;
@@ -2677,6 +2708,7 @@ export class IconAnimator {
         this._started = false;
         this._animations = {
             wiggle: [],
+            bounce: [],
         };
         this._timeline = new Clutter.Timeline({
             duration: AnimationUtils.adjustAnimationTime(ICON_ANIMATOR_DURATION) || 1,
@@ -2694,6 +2726,17 @@ export class IconAnimator {
             const wigglers = this._animations.wiggle;
             for (let i = 0, iMax = wigglers.length; i < iMax; i++)
                 wigglers[i].target.rotation_angle_z = wiggleRotation;
+
+            const bouncers = this._animations.bounce;
+            if (bouncers.length > 0) {
+                // macOS style bounce: vertical oscillation (bounce 3-4 times per cycle)
+                const bounceProgress = (progress * 3) % 1;
+                // Parabolic bounce arc: -4 * h * p * (1 - p)
+                const bounceHeight = -18;
+                const bounceY = bounceHeight * 4 * bounceProgress * (1 - bounceProgress);
+                for (let i = 0, iMax = bouncers.length; i < iMax; i++)
+                    bouncers[i].target.translation_y = bounceY;
+            }
         });
     }
 
@@ -2731,6 +2774,8 @@ export class IconAnimator {
     }
 
     addAnimation(target, name) {
+        if (!this._animations[name])
+            this._animations[name] = [];
         const targetDestroyId = target.connect('destroy',
             () => this.removeAnimation(target, name));
         this._animations[name].push({target, targetDestroyId});
@@ -2742,6 +2787,8 @@ export class IconAnimator {
 
     removeAnimation(target, name) {
         const pairs = this._animations[name];
+        if (!pairs)
+            return;
         for (let i = 0, iMax = pairs.length; i < iMax; i++) {
             const pair = pairs[i];
             if (pair.target === target) {

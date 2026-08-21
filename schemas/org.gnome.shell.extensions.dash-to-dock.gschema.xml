@@ -640,5 +640,30 @@
       <summary>Wether the application-provioded counter via Unity API should override the notifications or be summed to it</summary>
       <description>If an application provides a counter through the Unity API, then such value will be used. Otherwise the counter will be summed with the unread notification numbers (if enabled)</description>
     </key>
+    <key type="b" name="dock-magnification">
+      <default>true</default>
+      <summary>Icon magnification on hover</summary>
+      <description>Magnify dock icons on pointer hover like in macOS</description>
+    </key>
+    <key type="d" name="magnification-size-factor">
+      <default>1.6</default>
+      <summary>Magnification scale factor</summary>
+      <description>Maximum magnification zoom scale factor for hovered icons.</description>
+    </key>
+    <key type="b" name="animate-launch-bounce">
+      <default>true</default>
+      <summary>Bounce icon on application launch</summary>
+      <description>Animate the icon with a vertical bouncing effect when launching an application</description>
+    </key>
+    <key type="b" name="show-downloads">
+      <default>true</default>
+      <summary>Show downloads folder stack</summary>
+      <description>Show downloads folder icon with popup preview on the dock</description>
+    </key>
+    <key type="b" name="show-minimized-windows">
+      <default>true</default>
+      <summary>Show minimized windows in dock</summary>
+      <description>Show minimized windows with live preview thumbnails in a separate dock section</description>
+    </key>
   </schema>
 </schemalist>

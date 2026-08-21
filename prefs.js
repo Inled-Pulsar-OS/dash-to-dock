@@ -683,6 +683,22 @@ const DockSettings = GObject.registerClass({
             this._builder.get_object('show_trash_switch'),
             'active',
             Gio.SettingsBindFlags.DEFAULT);
+        this._settings.bind('show-downloads',
+            this._builder.get_object('show_downloads_switch'),
+            'active',
+            Gio.SettingsBindFlags.DEFAULT);
+        this._settings.bind('show-minimized-windows',
+            this._builder.get_object('show_minimized_windows_switch'),
+            'active',
+            Gio.SettingsBindFlags.DEFAULT);
+        this._settings.bind('dock-magnification',
+            this._builder.get_object('dock_magnification_switch'),
+            'active',
+            Gio.SettingsBindFlags.DEFAULT);
+        this._settings.bind('animate-launch-bounce',
+            this._builder.get_object('animate_launch_bounce_switch'),
+            'active',
+            Gio.SettingsBindFlags.DEFAULT);
         this._settings.bind('show-mounts',
             this._builder.get_object('show_mounts_switch'),
             'active',

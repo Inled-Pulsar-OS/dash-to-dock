@@ -517,3 +517,13 @@ $dock_style_modes: null, shrink, extended, extended-shrink;
         background-size: contain;
     }
 }
+
+.minimized-window-item {
+    border-radius: 8px;
+    padding: 2px;
+    transition-duration: 200ms;
+}
+
+.minimized-window-item:hover {
+    background-color: rgba(255, 255, 255, 0.18);
+}
