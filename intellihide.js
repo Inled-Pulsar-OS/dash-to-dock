@@ -83,13 +83,18 @@ export class Intellihide {
             'restacked',
             this._checkOverlap.bind(this),
         ], [
-            // when windows are alwasy on top, the focus window can change
+            // Immediately re-evaluate when user switches to an empty workspace
+            global.workspace_manager,
+            'active-workspace-changed',
+            this._checkOverlap.bind(this),
+        ], [
+            // when windows are always on top, the focus window can change
             // without the windows being restacked. Thus monitor window focus change.
             this._tracker,
             'notify::focus-app',
             this._checkOverlap.bind(this),
         ], [
-            // update wne monitor changes, for instance in multimonitor when monitor are attached
+            // update when monitor changes, for instance in multimonitor when monitor are attached
             Utils.getMonitorManager(),
             'monitors-changed',
             this._checkOverlap.bind(this),
