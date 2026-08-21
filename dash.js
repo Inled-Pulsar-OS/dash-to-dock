@@ -789,11 +789,9 @@ export const DockDash = GObject.registerClass({
             }
         }
 
-        // Apply scales and translations
+        // Apply scales and translations directly to the visual icon actor so layout allocation of the dock bar stays constant
         iconData.forEach(data => {
-            const targetActor = data.icon.get_parent() instanceof DockDashItemContainer
-                ? data.icon.get_parent()
-                : (data.icon.icon?._iconBin ?? data.icon.icon ?? data.icon._previewBin ?? data.icon);
+            const targetActor = data.icon.icon?._iconBin ?? data.icon.icon ?? data.icon._previewBin ?? data.icon;
             if (!targetActor)
                 return;
 
@@ -820,9 +818,7 @@ export const DockDash = GObject.registerClass({
     _resetMagnification() {
         const appIcons = this.getAppIcons();
         appIcons.forEach(icon => {
-            const targetActor = icon.get_parent() instanceof DockDashItemContainer
-                ? icon.get_parent()
-                : (icon.icon?._iconBin ?? icon.icon ?? icon._previewBin ?? icon);
+            const targetActor = icon.icon?._iconBin ?? icon.icon ?? icon._previewBin ?? icon;
             if (targetActor) {
                 targetActor.ease({
                     scale_x: 1.0,

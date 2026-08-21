@@ -1120,17 +1120,7 @@ const DockLocationAppIcon = GObject.registerClass({
         });
         this._fanContainer.add_child(backdrop);
 
-        // Render Open in Finder / Files button as first/topmost or base item
         const allItems = [
-            {
-                name: _('Open in Files'),
-                isAction: true,
-                icon: 'system-file-manager-symbolic',
-                action: () => {
-                    this._closeFan();
-                    this.app.activate();
-                },
-            },
             ...recentFiles.map(f => ({
                 name: f.name,
                 isAction: false,
@@ -1141,19 +1131,32 @@ const DockLocationAppIcon = GObject.registerClass({
                         global.create_app_launch_context(global.get_current_time(), -1));
                 },
             })),
+            {
+                name: _('Open in Files'),
+                isAction: true,
+                icon: 'system-file-manager-symbolic',
+                action: () => {
+                    this._closeFan();
+                    this.app.activate();
+                },
+            },
         ];
 
-        let currAngle = startAngle;
-        let currRadius = 60;
+        // Curve upward-left towards screen center (from ~270deg down to ~200deg)
+        const totalItems = allItems.length;
+        const startDeg = -90; // straight up
+        const endDeg = -160;  // curving left
+        const degStep = totalItems > 1 ? (endDeg - startDeg) / (totalItems - 1) : 0;
+        const baseRadius = 75;
+        const radiusStep = 38;
 
-        for (let i = 0; i < allItems.length; i++) {
+        for (let i = 0; i < totalItems; i++) {
             const itemData = allItems[i];
-            const angleRad = currAngle * (Math.PI / 180);
+            const angleRad = (startDeg + i * degStep) * (Math.PI / 180);
+            const radius = baseRadius + i * radiusStep;
             
-            const targetX = centerX + Math.cos(angleRad) * currRadius - 24;
-            const targetY = centerY + Math.sin(angleRad) * currRadius - 24;
-            currAngle += angleInc;
-            currRadius += 40;
+            const targetX = centerX + Math.cos(angleRad) * radius - 24;
+            const targetY = centerY + Math.sin(angleRad) * radius - 24;
 
             const itemWidget = new St.Widget({
                 reactive: true,
@@ -1183,7 +1186,8 @@ const DockLocationAppIcon = GObject.registerClass({
                 text: itemData.name,
                 y_align: Clutter.ActorAlign.CENTER,
             });
-            label.set_position(56, 10);
+            // Position label to the left of the icon
+            label.set_position(-label.get_preferred_width(-1)[1] - 8, 12);
 
             itemWidget.add_child(button);
             itemWidget.add_child(label);
