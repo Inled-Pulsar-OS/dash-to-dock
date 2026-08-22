@@ -646,7 +646,7 @@
       <description>Magnify dock icons on pointer hover like in macOS</description>
     </key>
     <key type="d" name="magnification-size-factor">
-      <default>1.6</default>
+      <default>1.42</default>
       <summary>Magnification scale factor</summary>
       <description>Maximum magnification zoom scale factor for hovered icons.</description>
     </key>

@@ -5,6 +5,7 @@ import {
     Gio,
     GLib,
     GObject,
+    Meta,
     Shell,
     St,
 } from './dependencies/gi.js';
@@ -293,6 +294,13 @@ export const DockDash = GObject.registerClass({
         });
 
         this._scrollView.connect('scroll-event', this._onScrollEvent.bind(this));
+
+        // St.ScrollView may re-enable clipping when its style changes; keep it
+        // off so magnified icons are never cut by the scroll viewport
+        this._scrollView.connect('style-changed', () => {
+            if (this._scrollView.clip_to_allocation)
+                this._scrollView.clip_to_allocation = false;
+        });
 
         this._boxContainer = new St.BoxLayout({
             name: 'dashtodockBoxContainer',
@@ -678,9 +686,16 @@ export const DockDash = GObject.registerClass({
         const item = new DockDashItemContainer(this._position);
         item.setChild(appIcon);
 
-        appIcon.connectObject('notify::hover', a => this._ensureItemVisibility(a), this);
+        appIcon.connectObject('notify::hover', a => {
+            // With magnification the lateral spread intentionally pushes
+            // icons beyond the scroll viewport; scrolling to reveal them
+            // causes a phantom horizontal scrollbar and clipped edges
+            if (!Docking.DockManager.settings.dockMagnification)
+                this._ensureItemVisibility(a);
+        }, this);
         appIcon.connectObject('clicked', actor => {
-            ensureActorVisibleInScrollView(this._scrollView, actor);
+            if (!Docking.DockManager.settings.dockMagnification)
+                ensureActorVisibleInScrollView(this._scrollView, actor);
         }, this);
 
         appIcon.connectObject('key-focus-in', actor => {
@@ -722,6 +737,19 @@ export const DockDash = GObject.registerClass({
         return item;
     }
 
+    _requireVisibility() {
+        this.requiresVisibility = true;
+
+        if (this._requiresVisibilityTimeout)
+            GLib.source_remove(this._requiresVisibilityTimeout);
+
+        this._requiresVisibilityTimeout = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT,
+            DASH_VISIBILITY_TIMEOUT, () => {
+                this._requiresVisibilityTimeout = 0;
+                this.requiresVisibility = false;
+            });
+    }
+
     _onDockMotionEvent(event) {
         if (!Docking.DockManager.settings.dockMagnification) {
             this._resetMagnification();
@@ -729,7 +757,7 @@ export const DockDash = GObject.registerClass({
         }
 
         const [pointerX, pointerY] = event.get_coords();
-        const maxFactor = Docking.DockManager.settings.magnificationSizeFactor || 1.6;
+        const maxFactor = Docking.DockManager.settings.magnificationSizeFactor || 1.42;
         const appIcons = this.getAppIcons();
 
         // Effective distance of magnification influence in px
@@ -762,7 +790,7 @@ export const DockDash = GObject.registerClass({
                 scale = 1.0 + (maxFactor - 1.0) * factor;
 
                 // Rise towards the outer edge
-                const lift = ((scale - 1.0) * (this.iconSize || 48)) * 0.7;
+                const lift = ((scale - 1.0) * (this.iconSize || 48)) * 0.55;
                 if (this._position === St.Side.BOTTOM) {
                     transY = -lift;
                 } else if (this._position === St.Side.TOP) {
@@ -809,6 +837,12 @@ export const DockDash = GObject.registerClass({
             } else {
                 targetActor.set_pivot_point(0.5, 0.5);
             }
+
+            // Raise magnified icons above their siblings so neighbouring
+            // icons never paint over the enlarged one
+            const parent = targetActor.get_parent();
+            if (parent && parent.get_child_at_index(parent.get_n_children() - 1) !== targetActor)
+                parent.set_child_above_sibling(targetActor, null);
 
             targetActor.ease({
                 scale_x: data.scale,

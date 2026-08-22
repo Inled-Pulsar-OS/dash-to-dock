@@ -776,42 +776,73 @@ export const DockAbstractAppIcon = GObject.registerClass({
             if (iconBin && !this._bouncing) {
                 this._bouncing = true;
 
-                const travel = (this.iconSize || 48) * 0.6;
-                const riseTime = 300;
-                const dropTime = 900;
-                let bounceIteration = 0;
+                const baseHeight = (this.iconSize || 48) * 0.55;
                 const maxIterations = 3;
+                let iteration = 0;
+
+                iconBin.set_pivot_point(0.5, 1.0);
+
+                const settle = () => {
+                    this._bouncing = false;
+                    iconBin.ease({
+                        translation_y: 0,
+                        scale_x: 1,
+                        scale_y: 1,
+                        duration: 220,
+                        mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                    });
+                };
 
                 const runBounceCycle = () => {
-                    if (!this._bouncing || bounceIteration >= maxIterations) {
-                        this._bouncing = false;
-                        iconBin.ease({
-                            translation_y: 0,
-                            duration: 200,
-                            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-                        });
+                    if (!this._bouncing || iteration >= maxIterations) {
+                        settle();
                         return;
                     }
 
-                    bounceIteration++;
+                    iteration++;
 
-                    // Phase 1: Rise up linearly
+                    // Each cycle is lower (72%) and slightly quicker, like
+                    // energy dissipating on a real ball — slow and calm,
+                    // nothing frantic
+                    const decay = Math.pow(0.72, iteration - 1);
+                    const travel = -baseHeight * decay;
+                    const riseTime = 480 + 140 * decay;
+                    const fallTime = 560 + 260 * decay;
+
+                    // Rise: leaves the ground fast and decelerates into the
+                    // apex, with a slight vertical stretch
                     iconBin.ease({
-                        translation_y: -travel,
+                        translation_y: travel,
+                        scale_x: 0.96,
+                        scale_y: 1.05,
                         duration: riseTime,
-                        mode: Clutter.AnimationMode.LINEAR,
+                        mode: Clutter.AnimationMode.EASE_OUT_QUAD,
                         onComplete: () => {
-                            // Phase 2: Bounce ease out over 3x duration
+                            if (!this._bouncing) {
+                                settle();
+                                return;
+                            }
+                            // Fall: accelerates downwards under gravity,
+                            // squashing on impact
                             iconBin.ease({
                                 translation_y: 0,
-                                duration: dropTime,
-                                mode: Clutter.AnimationMode.EASE_OUT_BOUNCE,
+                                scale_x: 1.04,
+                                scale_y: 0.95,
+                                duration: fallTime,
+                                mode: Clutter.AnimationMode.EASE_IN_QUAD,
                                 onComplete: () => {
-                                    if (this._bouncing && bounceIteration < maxIterations) {
-                                        runBounceCycle();
-                                    } else {
-                                        this._bouncing = false;
+                                    if (!this._bouncing || iteration >= maxIterations) {
+                                        settle();
+                                        return;
                                     }
+                                    // Brief landing recovery before the next hop
+                                    iconBin.ease({
+                                        scale_x: 1,
+                                        scale_y: 1,
+                                        duration: 180,
+                                        mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                                        onComplete: () => runBounceCycle(),
+                                    });
                                 },
                             });
                         },
@@ -1042,6 +1073,14 @@ const DockLocationAppIcon = GObject.registerClass({
 
         super._init(app, monitorIndex, iconAnimator);
 
+        this._fanOpen = false;
+        this._fanClosing = false;
+        this._dash = null;
+        this._dashHoldActive = false;
+
+        // Make sure an open downloads fan never outlives its icon
+        this.connect('destroy', () => this._closeFan(true));
+
         if (Docking.DockManager.settings.isolateLocations) {
             this._signalsHandler.add(tracker, 'notify::focus-app', () => this._updateFocusState());
         } else {
@@ -1050,6 +1089,43 @@ const DockLocationAppIcon = GObject.registerClass({
         }
 
         this._signalsHandler.add(this.app, 'notify::icon', () => this.icon.update());
+    }
+
+    // Walk up the actor hierarchy to find the DockDash owning this icon
+    _findDash() {
+        let parent = this.get_parent();
+        while (parent && typeof parent.getAppIcons !== 'function')
+            parent = parent.get_parent();
+        return parent ?? null;
+    }
+
+    // While the fan is open keep the dock shown exactly like an open popup
+    // menu does: ignoreHover blocks autohide and requiresVisibility blocks
+    // intellihide from hiding the dock while the pointer is over the arc
+    _holdDockVisible() {
+        this._dash = this._findDash();
+        if (!this._dash)
+            return;
+
+        this._dashHoldActive = true;
+        this._dash.requiresVisibility = true;
+        this._dash.emit('menu-opened');
+    }
+
+    _releaseDock() {
+        if (!this._dashHoldActive)
+            return;
+
+        this._dashHoldActive = false;
+
+        try {
+            if (this._dash) {
+                this._dash.requiresVisibility = false;
+                this._dash.emit('menu-closed');
+            }
+        } catch {
+            // The dash may already be gone
+        }
     }
 
     activate(button) {
@@ -1061,8 +1137,8 @@ const DockLocationAppIcon = GObject.registerClass({
     }
 
     showDownloadsFan() {
-        if (this._fanMenu && this._fanMenu.isOpen) {
-            this._fanMenu.close();
+        if (this._fanOpen) {
+            this._closeFan();
             return;
         }
 
@@ -1098,7 +1174,18 @@ const DockLocationAppIcon = GObject.registerClass({
                 clip_to_allocation: false,
             });
             Main.uiGroup.add_child(this._fanContainer);
+            this._fanContainer.connect('destroy', () => {
+                this._fanContainer = null;
+                this._fanOpen = false;
+                this._fanClosing = false;
+            });
         }
+
+        this._fanOpen = true;
+        this._fanClosing = false;
+
+        // Keep the dock visible while the pointer travels over the arc
+        this._holdDockVisible();
 
         this._fanContainer.remove_all_children();
 
@@ -1109,12 +1196,6 @@ const DockLocationAppIcon = GObject.registerClass({
 
         const maxFiles = 8;
         const recentFiles = files.slice(0, maxFiles);
-
-        // Arc geometry matching macOS / dash2dock-lite
-        const count = recentFiles.length + 1; // +1 for "Open in Finder" item
-        const angleInc = 10.5; // degrees per item
-        const startAngle = 270 - ((count - 1) / 2) * angleInc;
-        const rad = 72; // step distance
 
         const backdrop = new St.Widget({
             reactive: true,
@@ -1157,17 +1238,20 @@ const DockLocationAppIcon = GObject.registerClass({
 
         for (let i = 0; i < totalItems; i++) {
             const itemData = allItems[i];
-            
+
             // Subtly curved upwards: slight arc xOffset ~ 2.5px per item
             const curveOffset = Math.sin((i / Math.max(1, totalItems - 1)) * (Math.PI / 2)) * 14;
             const targetX = centerX - iconSize / 2 - curveOffset;
             const targetY = originY - (i + 1) * itemSpacing;
 
+            // Items spring out of the dock icon towards their arc position
             const itemWidget = new St.Widget({
                 reactive: true,
                 x: centerX - iconSize / 2,
-                y: originY,
+                y: centerY - iconSize / 2,
                 opacity: 0,
+                scale_x: 0.3,
+                scale_y: 0.3,
             });
 
             const button = new St.Button({
@@ -1218,21 +1302,76 @@ const DockLocationAppIcon = GObject.registerClass({
                 });
             });
 
-            // Animate ejection
+            // Animate ejection: macOS style spring pop with stagger
+            itemWidget.set_pivot_point(0.5, 0.5);
+            const delay = i * 30;
             itemWidget.ease({
                 x: targetX,
                 y: targetY,
                 opacity: 255,
-                duration: 200 + i * 28,
+                duration: 260,
+                delay,
                 mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+            });
+            itemWidget.ease({
+                scale_x: 1.0,
+                scale_y: 1.0,
+                duration: 320,
+                delay,
+                mode: Clutter.AnimationMode.EASE_OUT_BACK,
             });
         }
     }
 
-    _closeFan() {
-        if (!this._fanContainer)
+    _closeFan(instant = false) {
+        if (!this._fanContainer || !this._fanOpen || this._fanClosing)
             return;
-        this._fanContainer.remove_all_children();
+
+        if (instant) {
+            this._fanOpen = false;
+            this._fanClosing = false;
+            this._fanContainer.remove_all_children();
+            this._fanContainer.destroy();
+            this._releaseDock();
+            return;
+        }
+
+        this._fanClosing = true;
+
+        const [iconX, iconY] = this.get_transformed_position();
+        const [iconW, iconH] = this.get_transformed_size();
+
+        // Skip the invisible backdrop, collapse the items back into the icon
+        const items = this._fanContainer.get_children().slice(1);
+        let longestAnimation = 120;
+
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            const delay = i * 18;
+            longestAnimation = Math.max(longestAnimation, delay + 180);
+            item.set_pivot_point(0.5, 0.5);
+            item.ease({
+                x: iconX + iconW / 2 - item.width / 2,
+                y: iconY + iconH / 2 - item.height / 2,
+                scale_x: 0.3,
+                scale_y: 0.3,
+                opacity: 0,
+                duration: 180,
+                delay,
+                mode: Clutter.AnimationMode.EASE_IN_QUAD,
+            });
+        }
+
+        GLib.timeout_add(GLib.PRIORITY_DEFAULT, longestAnimation + 20, () => {
+            this._fanClosing = false;
+            this._fanOpen = false;
+
+            if (this._fanContainer)
+                this._fanContainer.remove_all_children();
+
+            this._releaseDock();
+            return GLib.SOURCE_REMOVE;
+        });
     }
 });
 
