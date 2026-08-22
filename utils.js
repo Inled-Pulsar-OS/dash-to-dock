@@ -788,3 +788,77 @@ export function addActor(element, actor) {
 
 export const clamp = (v, m, M) => Math.min(Math.max(v, m), M);
 export const clampDouble = v => clamp(v, 0, 1);
+
+const DOWNLOADS_DIR_NAMES = [
+    'Downloads', 'Download',
+    'Descargas',
+    'Téléchargements',
+    'Scaricati',
+    'Transferências',
+    'Binnengehaald',
+    'Загрузки',
+    'Pobrane',
+    'Stažené',
+    'Stiahnuté',
+    'Prejemi',
+    'Preuzimanja',
+    'Преузимања',
+    'Свалени',
+    'Descărcări',
+    'Letöltés',
+    'Λήψεις',
+    'İndirilenler',
+    'Завантаження',
+    'Lejupielādes',
+    'Atsisiuntimai',
+    'Allalaadimised',
+    'Lataukset',
+    'Hämtningar', 'Hämtade filer',
+    'Hentede filer', 'Hentninger',
+    'Nedlastinger',
+    'Niðurhal',
+    'Baixades',
+    'Deskargak',
+    'Descargues',
+    'التنزيلات',
+    'הורדות',
+    'دریافتی',
+    'डाउनलोड',
+    'ডাউনলোড',
+    'பதிவிறக்கங்கள்',
+    'ダウンロード',
+    '下载',
+    '下載',
+    '다운로드',
+    'Tải về',
+    'ดาวน์โหลด',
+    'Unduhan',
+    'Muat Turun',
+];
+
+/**
+ * Resolves the user's Downloads directory even when the XDG user-dirs
+ * database is missing or stale and the folder was renamed to a
+ * localized name (e.g. "Descargas", "Téléchargements", "Загрузки").
+ *
+ * @returns {string} Absolute path of an existing Downloads folder, or
+ *          the best-guess path when none could be found.
+ */
+export function getDownloadsDir() {
+    const home = GLib.get_home_dir();
+    const xdgPath = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD);
+
+    const candidates = [];
+    if (xdgPath)
+        candidates.push(xdgPath);
+    for (const name of DOWNLOADS_DIR_NAMES)
+        candidates.push(GLib.build_filenamev([home, name]));
+
+    for (const candidate of candidates) {
+        if (candidate && GLib.file_test(candidate, GLib.FileTest.IS_DIR))
+            return candidate;
+    }
+
+    return xdgPath ?? GLib.build_filenamev([home, 'Downloads']);
+}
+

@@ -1162,8 +1162,7 @@ const DockLocationAppIcon = GObject.registerClass({
             return;
         }
 
-        const downloadsPath = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD) ??
-            GLib.build_filenamev([GLib.get_home_dir(), 'Downloads']);
+        const downloadsPath = Utils.getDownloadsDir();
         const downloadsDir = Gio.file_new_for_path(downloadsPath);
 
         const files = [];
@@ -1501,8 +1500,7 @@ const DockAppIconMenu = class DockAppIconMenu extends PopupMenu.PopupMenu {
         const {app} = this.sourceActor;
 
         if (app.isDownloads) {
-            const downloadsPath = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD) ??
-                GLib.build_filenamev([GLib.get_home_dir(), 'Downloads']);
+            const downloadsPath = Utils.getDownloadsDir();
             const downloadsDir = Gio.file_new_for_path(downloadsPath);
 
             const openFolderItem = this._appendMenuItem(__('Open in Files'));

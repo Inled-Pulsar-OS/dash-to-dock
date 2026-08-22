@@ -885,10 +885,8 @@ const DownloadsAppInfo = GObject.registerClass({
 },
 class DownloadsAppInfo extends LocationAppInfo {
     _init(cancellable = null) {
-        const downloadsPath = GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DOWNLOAD) ??
-            GLib.build_filenamev([GLib.get_home_dir(), 'Downloads']);
         super._init({
-            location: Gio.file_new_for_path(downloadsPath),
+            location: Gio.file_new_for_path(Utils.getDownloadsDir()),
             name: __('Downloads'),
             icon: Gio.ThemedIcon.new('folder-download'),
             cancellable,
