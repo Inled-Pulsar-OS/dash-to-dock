@@ -527,3 +527,18 @@ $dock_style_modes: null, shrink, extended, extended-shrink;
 .minimized-window-item:hover {
     background-color: rgba(255, 255, 255, 0.18);
 }
+
+// No drop shadow nor background highlight behind dock icons on hover;
+// magnification is enough
+// Sin sombra ni resaltado de fondo en los iconos del dock al hacer hover
+#dashtodockContainer {
+    .app-well-app:hover .overview-icon,
+    .show-apps:hover .overview-icon,
+    .app-well-app .overview-icon:hover,
+    .show-apps .overview-icon:hover {
+        box-shadow: none !important;
+        icon-shadow: none !important;
+        background-color: transparent !important;
+        border-color: transparent !important;
+    }
+}
