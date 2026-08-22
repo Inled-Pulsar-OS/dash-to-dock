@@ -777,42 +777,62 @@ export const DockAbstractAppIcon = GObject.registerClass({
                 this._bouncing = true;
 
                 const baseHeight = (this.iconSize || 48) * 0.55;
-                const maxIterations = 3;
-                let iteration = 0;
 
                 iconBin.set_pivot_point(0.5, 1.0);
 
+                // Safety net: never bounce forever if the app never opens
+                if (this._bounceTimeoutId)
+                    GLib.source_remove(this._bounceTimeoutId);
+                this._bounceTimeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 60, () => {
+                    this._bounceTimeoutId = 0;
+                    this._bouncing = false;
+                    return GLib.SOURCE_REMOVE;
+                });
+
+                const stopWatching = () => {
+                    if (this._bounceTimeoutId) {
+                        GLib.source_remove(this._bounceTimeoutId);
+                        this._bounceTimeoutId = 0;
+                    }
+                    if (this._windowsChangedId) {
+                        try {
+                            this.app.disconnect(this._windowsChangedId);
+                        } catch {
+                            // The app may already be gone
+                        }
+                        this._windowsChangedId = 0;
+                    }
+                };
+
                 const settle = () => {
                     this._bouncing = false;
-                    iconBin.ease({
-                        translation_y: 0,
-                        scale_x: 1,
-                        scale_y: 1,
-                        duration: 220,
-                        mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-                    });
+                    stopWatching();
+                    // The icon may have been destroyed while bouncing
+                    try {
+                        iconBin.ease({
+                            translation_y: 0,
+                            scale_x: 1,
+                            scale_y: 1,
+                            duration: 220,
+                            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                        });
+                    } catch {}
                 };
 
                 const runBounceCycle = () => {
-                    if (!this._bouncing || iteration >= maxIterations) {
+                    if (!this._bouncing) {
                         settle();
                         return;
                     }
 
-                    iteration++;
-
-                    // Each cycle is lower (72%) and slightly quicker, like
-                    // energy dissipating on a real ball — slow and calm,
-                    // nothing frantic
-                    const decay = Math.pow(0.72, iteration - 1);
-                    const travel = -baseHeight * decay;
-                    const riseTime = 480 + 140 * decay;
-                    const fallTime = 560 + 260 * decay;
+                    // Slow, constant rhythm while waiting for the app to open
+                    const riseTime = 1050;
+                    const fallTime = 1350;
 
                     // Rise: leaves the ground fast and decelerates into the
                     // apex, with a slight vertical stretch
                     iconBin.ease({
-                        translation_y: travel,
+                        translation_y: -baseHeight,
                         scale_x: 0.96,
                         scale_y: 1.05,
                         duration: riseTime,
@@ -831,7 +851,7 @@ export const DockAbstractAppIcon = GObject.registerClass({
                                 duration: fallTime,
                                 mode: Clutter.AnimationMode.EASE_IN_QUAD,
                                 onComplete: () => {
-                                    if (!this._bouncing || iteration >= maxIterations) {
+                                    if (!this._bouncing) {
                                         settle();
                                         return;
                                     }
@@ -839,7 +859,7 @@ export const DockAbstractAppIcon = GObject.registerClass({
                                     iconBin.ease({
                                         scale_x: 1,
                                         scale_y: 1,
-                                        duration: 180,
+                                        duration: 260,
                                         mode: Clutter.AnimationMode.EASE_OUT_QUAD,
                                         onComplete: () => runBounceCycle(),
                                     });
@@ -851,10 +871,10 @@ export const DockAbstractAppIcon = GObject.registerClass({
 
                 runBounceCycle();
 
-                // Stop bounce when windows appear
-                const connId = this.app.connect('windows-changed', () => {
-                    this.app.disconnect(connId);
-                    this._bouncing = false;
+                // Keep bouncing until the app actually opens
+                this._windowsChangedId = this.app.connect('windows-changed', () => {
+                    this._windowsChangedId = 0;
+                    settle();
                 });
             }
         }
