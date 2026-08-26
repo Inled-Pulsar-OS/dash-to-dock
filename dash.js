@@ -844,14 +844,14 @@ export const DockDash = GObject.registerClass({
             if (parent && parent.get_child_at_index(parent.get_n_children() - 1) !== targetActor)
                 parent.set_child_above_sibling(targetActor, null);
 
-            targetActor.ease({
-                scale_x: data.scale,
-                scale_y: data.scale,
-                translation_x: finalTransX,
-                translation_y: finalTransY * 0.3,
-                duration: 60,
-                mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-            });
+            targetActor.remove_transition('scale-x');
+            targetActor.remove_transition('scale-y');
+            targetActor.remove_transition('translation-x');
+            targetActor.remove_transition('translation-y');
+            targetActor.scale_x = data.scale;
+            targetActor.scale_y = data.scale;
+            targetActor.translation_x = finalTransX;
+            targetActor.translation_y = finalTransY * 0.3;
         });
     }
 
@@ -860,14 +860,14 @@ export const DockDash = GObject.registerClass({
         appIcons.forEach(icon => {
             const targetActor = icon.icon?._iconBin ?? icon.icon ?? icon._previewBin ?? icon;
             if (targetActor) {
-                targetActor.ease({
-                    scale_x: 1.0,
-                    scale_y: 1.0,
-                    translation_x: 0,
-                    translation_y: 0,
-                    duration: 180,
-                    mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-                });
+                targetActor.remove_transition('scale-x');
+                targetActor.remove_transition('scale-y');
+                targetActor.remove_transition('translation-x');
+                targetActor.remove_transition('translation-y');
+                targetActor.scale_x = 1.0;
+                targetActor.scale_y = 1.0;
+                targetActor.translation_x = 0;
+                targetActor.translation_y = 0;
             }
         });
     }

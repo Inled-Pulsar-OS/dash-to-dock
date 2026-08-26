@@ -230,7 +230,7 @@ $dock_style_modes: null, shrink, extended, extended-shrink;
                         background-image: none;
                     }
                     &.focused .overview-icon {
-                        background-color: $remark_color;
+                        background-color: transparent;
                     }
 
                     .app-well-app-running-dot,
@@ -266,13 +266,13 @@ $dock_style_modes: null, shrink, extended, extended-shrink;
 
 .dash-item-container .overview-tile .overview-icon,
 .dash-item-container .show-apps .overview-icon {
-    background-color: rgba(255,255,255,0);
+    background-color: transparent;
 }
 
 .dash-item-container .overview-tile:hover .overview-icon,
 .dash-item-container .overview-tile.focused .overview-icon,
 .dash-item-container .show-apps:hover .overview-icon {
-    background-color: $remark_color;
+    background-color: transparent;
 }
 
 .dash-item-container .overview-tile .app-grid-running-dot {
@@ -531,14 +531,49 @@ $dock_style_modes: null, shrink, extended, extended-shrink;
 // No drop shadow nor background highlight behind dock icons on hover;
 // magnification is enough
 // Sin sombra ni resaltado de fondo en los iconos del dock al hacer hover
-#dashtodockContainer {
-    .app-well-app:hover .overview-icon,
-    .show-apps:hover .overview-icon,
-    .app-well-app .overview-icon:hover,
-    .show-apps .overview-icon:hover {
+#dashtodockContainer,
+#dashtodockContainer #dash {
+    .dash-item-container > StButton,
+    .dash-item-container > StButton:hover,
+    .dash-item-container > StButton:focus,
+    .dash-item-container > StButton:active,
+    .dash-item-container > StButton:checked,
+    .dash-item-container > StButton:selected,
+    .app-well-app,
+    .app-well-app:hover,
+    .app-well-app:focus,
+    .app-well-app:active,
+    .app-well-app:checked,
+    .app-well-app:selected,
+    .show-apps,
+    .show-apps:hover,
+    .show-apps:focus,
+    .show-apps:active,
+    .show-apps:checked,
+    .show-apps:selected,
+    .overview-tile,
+    .overview-tile:hover,
+    .overview-tile:focus,
+    .overview-tile:active,
+    .overview-tile:checked,
+    .overview-tile:selected {
+        background-color: transparent !important;
+        background-image: none !important;
         box-shadow: none !important;
         icon-shadow: none !important;
-        background-color: transparent !important;
         border-color: transparent !important;
+
+        .overview-icon,
+        .overview-icon:hover,
+        .overview-icon:focus,
+        .overview-icon:active,
+        .overview-icon:selected {
+            background-color: transparent !important;
+            background-image: none !important;
+            box-shadow: none !important;
+            icon-shadow: none !important;
+            border-color: transparent !important;
+        }
     }
 }
+
