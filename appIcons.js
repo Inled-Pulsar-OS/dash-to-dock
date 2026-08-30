@@ -809,13 +809,15 @@ export const DockAbstractAppIcon = GObject.registerClass({
                     stopWatching();
                     // The icon may have been destroyed while bouncing
                     try {
-                        iconBin.ease({
-                            translation_y: 0,
-                            scale_x: 1,
-                            scale_y: 1,
-                            duration: 220,
-                            mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-                        });
+                        if (iconBin && !iconBin.is_finalized?.() && iconBin.get_stage?.()) {
+                            iconBin.ease({
+                                translation_y: 0,
+                                scale_x: 1,
+                                scale_y: 1,
+                                duration: 220,
+                                mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                            });
+                        }
                     } catch {}
                 };
 
@@ -1625,7 +1627,7 @@ const DockAppIconMenu = class DockAppIconMenu extends PopupMenu.PopupMenu {
 
             const canFavorite = global.settings.is_writable('favorite-apps') &&
                 (this.sourceActor instanceof DockAppIcon) &&
-                ParentalControlsManager.getDefault().shouldShowApp(app.appInfo);
+                ParentalControlsManager.getDefault().shouldShowApp(appInfo);
 
             if (canFavorite) {
                 this._appendSeparator();

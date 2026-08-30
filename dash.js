@@ -373,7 +373,7 @@ export const DockDash = GObject.registerClass({
         this.add_child(this._background);
         this.add_child(this._dashContainer);
 
-        this._workId = Main.initializeDeferredWork(this._box, this._redisplay.bind(this));
+        this._queueRedisplay();
 
         this._shellSettings = new Gio.Settings({
             schema_id: 'org.gnome.shell',
@@ -386,6 +386,13 @@ export const DockDash = GObject.registerClass({
         this._signalsHandler.add([
             this._appSystem,
             'installed-changed',
+            () => {
+                AppFavorites.getAppFavorites().reload();
+                this._queueRedisplay();
+            },
+        ], [
+            this._shellSettings,
+            'changed::favorite-apps',
             () => {
                 AppFavorites.getAppFavorites().reload();
                 this._queueRedisplay();
@@ -419,7 +426,7 @@ export const DockDash = GObject.registerClass({
             () => this._queueRedisplay(),
         ], [
             global.workspace_manager,
-            'workspace-switched',
+            'active-workspace-changed',
             () => this._queueRedisplay(),
         ], [
             Main.overview,
@@ -473,6 +480,11 @@ export const DockDash = GObject.registerClass({
     _onDestroy() {
         this.iconAnimator.destroy();
 
+        if (this._redisplayQueueId) {
+            GLib.source_remove(this._redisplayQueueId);
+            delete this._redisplayQueueId;
+        }
+
         if (this._requiresVisibilityTimeout) {
             GLib.source_remove(this._requiresVisibilityTimeout);
             delete this._requiresVisibilityTimeout;
@@ -509,8 +521,14 @@ export const DockDash = GObject.registerClass({
         return Dash.Dash.prototype._appIdListToHash.call(this, ...args);
     }
 
-    _queueRedisplay(...args) {
-        return Dash.Dash.prototype._queueRedisplay.call(this, ...args);
+    _queueRedisplay() {
+        if (this._redisplayQueueId)
+            return;
+        this._redisplayQueueId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+            this._redisplayQueueId = 0;
+            this._redisplay();
+            return GLib.SOURCE_REMOVE;
+        });
     }
 
     _hookUpLabel(...args) {
