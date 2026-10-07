@@ -770,116 +770,225 @@ export const DockAbstractAppIcon = GObject.registerClass({
     }
 
     animateLaunch() {
-        super.animateLaunch?.();
-        if (Docking.DockManager.settings.animateLaunchBounce) {
-            const iconBin = this.icon?._iconBin ?? this.icon?._iconContainer ?? this.icon;
-            if (iconBin && !this._bouncing) {
-                this._bouncing = true;
+        // This icon's floating magnification clone, in case it currently
+        // stands in for the dock icon (dash.js keeps the reference in sync).
+        const magnified =
+            this._pulsarMagnifyClone &&
+            !this._pulsarMagnifyClone.is_finalized?.() &&
+            this._pulsarMagnifyClone.visible
+                ? this._pulsarMagnifyClone
+                : null;
 
-                const baseHeight = (this.iconSize || 48) * 0.55;
+        // Already animating: nothing new to show, and spawning another
+        // animation would stack a second copy of the icon.
+        if (this._bouncing)
+            return;
 
-                iconBin.set_pivot_point(0.5, 1.0);
+        const magnificationOn = Docking.DockManager.settings.dockMagnification;
 
-                // Safety net: never bounce forever if the app never opens
-                if (this._bounceTimeoutId)
-                    GLib.source_remove(this._bounceTimeoutId);
-                this._bounceTimeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 60, () => {
-                    this._bounceTimeoutId = 0;
-                    this._bouncing = false;
-                    return GLib.SOURCE_REMOVE;
-                });
+        // super.animateLaunch() draws a zoom-out ghost built from the
+        // unmagnified icon in Main.uiGroup; next to the magnified clone it
+        // reads as a second copy of the icon. In magnification mode the
+        // press/bounce below is the launch feedback, so the stock ghost only
+        // plays in pure dock mode.
+        if (!magnified && !magnificationOn)
+            super.animateLaunch?.();
 
-                const stopWatching = () => {
-                    if (this._bounceTimeoutId) {
-                        GLib.source_remove(this._bounceTimeoutId);
-                        this._bounceTimeoutId = 0;
-                    }
-                    if (this._windowsChangedId) {
-                        try {
-                            this.app.disconnect(this._windowsChangedId);
-                        } catch {
-                            // The app may already be gone
-                        }
-                        this._windowsChangedId = 0;
-                    }
-                };
+        const bounceEnabled = Docking.DockManager.settings.animateLaunchBounce;
 
-                const settle = () => {
-                    this._bouncing = false;
-                    stopWatching();
-                    // The icon may have been destroyed while bouncing
-                    try {
-                        if (iconBin && !iconBin.is_finalized?.() && iconBin.get_stage?.()) {
-                            iconBin.ease({
-                                translation_y: 0,
-                                scale_x: 1,
-                                scale_y: 1,
-                                duration: 220,
-                                mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-                            });
-                        }
-                    } catch {}
-                };
+        console.log(`[pulsar-dbg] launch ${this.app?.get_id?.() ?? '?'} mag=${!!magnified} bnc=${!!this._bouncing} iconOp=${this.icon?.opacity ?? -1} bounceOn=${bounceEnabled}`);
 
-                const runBounceCycle = () => {
+        if (!magnified && !magnificationOn && !bounceEnabled)
+            return;
+
+        const iconBin =
+            this.icon?._iconBin ?? this.icon?._iconContainer ?? this.icon;
+
+        // The press/bounce runs on the magnified clone when it is up — that
+        // single icon reacts to the click (drops) instead of a second copy
+        // appearing — and on the real dock icon otherwise.
+        const target = magnified ?? iconBin;
+
+        if (!target)
+            return;
+
+        this._bouncing = true;
+
+        const baseHeight = (this.iconSize || 48) * 0.55;
+
+        // The clone already has the dock-position pivot from dash.js; only
+        // the real icon needs it forced before it squashes/bounces.
+        if (!magnified)
+            target.set_pivot_point(0.5, 1.0);
+
+        // Safety net: never bounce forever if the app never opens
+        if (this._bounceTimeoutId)
+            GLib.source_remove(this._bounceTimeoutId);
+        this._bounceTimeoutId = GLib.timeout_add_seconds(GLib.PRIORITY_DEFAULT, 60, () => {
+            this._bounceTimeoutId = 0;
+            this._bouncing = false;
+            return GLib.SOURCE_REMOVE;
+        });
+
+        const stopWatching = () => {
+            if (this._bounceTimeoutId) {
+                GLib.source_remove(this._bounceTimeoutId);
+                this._bounceTimeoutId = 0;
+            }
+            if (this._windowsChangedId) {
+                try {
+                    this.app.disconnect(this._windowsChangedId);
+                } catch {
+                    // The app may already be gone
+                }
+                this._windowsChangedId = 0;
+            }
+            if (this._focusWatchId) {
+                try {
+                    global.display.disconnect(this._focusWatchId);
+                } catch {
+                    // The display never goes away, but be safe
+                }
+                this._focusWatchId = 0;
+            }
+        };
+
+        const settle = () => {
+            this._bouncing = false;
+            stopWatching();
+            // The actor may have been destroyed while bouncing
+            try {
+                if (target && !target.is_finalized?.() && target.get_stage?.()) {
+                    target.ease({
+                        translation_y: 0,
+                        scale_x: 1,
+                        scale_y: 1,
+                        duration: 220,
+                        mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                    });
+                }
+            } catch {}
+        };
+
+        const runBounceCycle = () => {
+            if (!this._bouncing) {
+                settle();
+                return;
+            }
+
+            if (target.is_finalized?.() || !target.get_stage?.()) {
+                settle();
+                return;
+            }
+
+            // Slow, constant rhythm while waiting for the app to open
+            const riseTime = 1050;
+            const fallTime = 1350;
+
+            // Rise: leaves the ground fast and decelerates into the
+            // apex, with a slight vertical stretch
+            target.ease({
+                translation_y: -baseHeight,
+                scale_x: 0.96,
+                scale_y: 1.05,
+                duration: riseTime,
+                mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                onComplete: () => {
                     if (!this._bouncing) {
                         settle();
                         return;
                     }
-
-                    // Slow, constant rhythm while waiting for the app to open
-                    const riseTime = 1050;
-                    const fallTime = 1350;
-
-                    // Rise: leaves the ground fast and decelerates into the
-                    // apex, with a slight vertical stretch
-                    iconBin.ease({
-                        translation_y: -baseHeight,
-                        scale_x: 0.96,
-                        scale_y: 1.05,
-                        duration: riseTime,
-                        mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                    // Fall: accelerates downwards under gravity,
+                    // squashing on impact
+                    target.ease({
+                        translation_y: 0,
+                        scale_x: 1.04,
+                        scale_y: 0.95,
+                        duration: fallTime,
+                        mode: Clutter.AnimationMode.EASE_IN_QUAD,
                         onComplete: () => {
                             if (!this._bouncing) {
                                 settle();
                                 return;
                             }
-                            // Fall: accelerates downwards under gravity,
-                            // squashing on impact
-                            iconBin.ease({
-                                translation_y: 0,
-                                scale_x: 1.04,
-                                scale_y: 0.95,
-                                duration: fallTime,
-                                mode: Clutter.AnimationMode.EASE_IN_QUAD,
-                                onComplete: () => {
-                                    if (!this._bouncing) {
-                                        settle();
-                                        return;
-                                    }
-                                    // Brief landing recovery before the next hop
-                                    iconBin.ease({
-                                        scale_x: 1,
-                                        scale_y: 1,
-                                        duration: 260,
-                                        mode: Clutter.AnimationMode.EASE_OUT_QUAD,
-                                        onComplete: () => runBounceCycle(),
-                                    });
-                                },
+                            // Brief landing recovery before the next hop
+                            target.ease({
+                                scale_x: 1,
+                                scale_y: 1,
+                                duration: 260,
+                                mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                                onComplete: () => runBounceCycle(),
                             });
                         },
                     });
-                };
+                },
+            });
+        };
 
-                runBounceCycle();
+        const runPress = () => {
+            // Short press feedback, in place of the stock ghost: the clone
+            // drops when it stands in for the icon, the real dock icon
+            // otherwise — either way exactly one icon reacts.
+            target.ease({
+                scale_x: 0.88,
+                scale_y: 0.88,
+                duration: 90,
+                mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                onComplete: () => {
+                    if (!this._bouncing) {
+                        settle();
+                        return;
+                    }
 
-                // Keep bouncing until the app actually opens
-                this._windowsChangedId = this.app.connect('windows-changed', () => {
-                    this._windowsChangedId = 0;
-                    settle();
-                });
+                    if (bounceEnabled)
+                        runBounceCycle();
+                    else
+                        settle();
+                },
+            });
+        };
+
+        // Keep bouncing until the app actually opens. A stale handler from
+        // an earlier launch (abandoned by the safety timeout) must not fire
+        // later and cut this one short.
+        if (this._windowsChangedId) {
+            try {
+                this.app.disconnect(this._windowsChangedId);
+            } catch {
+                // The app may already be gone
             }
+            this._windowsChangedId = 0;
         }
+
+        if (this._focusWatchId) {
+            try {
+                global.display.disconnect(this._focusWatchId);
+            } catch {
+                // The display never goes away, but be safe
+            }
+            this._focusWatchId = 0;
+        }
+
+        this._windowsChangedId = this.app.connect('windows-changed', () => {
+            console.log('[pulsar-dbg] settle windows-changed');
+            this._windowsChangedId = 0;
+            settle();
+        });
+
+        // Clicking an app that is already running only focuses a window:
+        // no window is added, so windows-changed never fires and the icon
+        // would keep hopping until the safety timeout. The first focus
+        // change means the click did its job.
+        this._focusWatchId = global.display.connect(
+            'notify::focus-window', () => {
+                console.log('[pulsar-dbg] settle focus');
+                settle();
+            });
+
+        if (magnified || magnificationOn)
+            runPress();
+        else
+            runBounceCycle();
     }
 
     // Try to do the right thing when attempting to launch a new window of an app. In
