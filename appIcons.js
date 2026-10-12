@@ -784,6 +784,24 @@ export const DockAbstractAppIcon = GObject.registerClass({
         if (this._bouncing)
             return;
 
+        try {
+            if (this._pulsarMagnifyClone || this.icon?.opacity === 0)
+                console.log(`[pulsar-dock-dbg] launch mag=${!!magnified} iconOp=${this.icon?.opacity} cloneVis=${this._pulsarMagnifyClone?.visible} app=${this.app?.get_id?.()}`);
+        } catch {}
+
+        // The floating clone stands in for this icon during the click: hide
+        // the real dock icon right away. While merely hovering the clone
+        // covers the real, but the press/bounce lifts the clone and would
+        // expose the real underneath — a static duplicate for as long as
+        // the launch feedback runs. The dock re-hides it on every motion
+        // pass; this guarantees it from the click itself.
+        if (magnified) {
+            try {
+                if (this.icon && this.icon.opacity !== 0)
+                    this.icon.opacity = 0;
+            } catch {}
+        }
+
         const magnificationOn = Docking.DockManager.settings.dockMagnification;
 
         // super.animateLaunch() draws a zoom-out ghost built from the
@@ -795,8 +813,6 @@ export const DockAbstractAppIcon = GObject.registerClass({
             super.animateLaunch?.();
 
         const bounceEnabled = Docking.DockManager.settings.animateLaunchBounce;
-
-        console.log(`[pulsar-dbg] launch ${this.app?.get_id?.() ?? '?'} mag=${!!magnified} bnc=${!!this._bouncing} iconOp=${this.icon?.opacity ?? -1} bounceOn=${bounceEnabled}`);
 
         if (!magnified && !magnificationOn && !bounceEnabled)
             return;
@@ -856,6 +872,40 @@ export const DockAbstractAppIcon = GObject.registerClass({
         const settle = () => {
             this._bouncing = false;
             stopWatching();
+
+            let dash = this._pulsarDash;
+            if (!dash) {
+                let node = this.get_parent?.();
+                while (node) {
+                    if (node._delegate?._pulsarReapplyMagnification) {
+                        dash = node._delegate;
+                        break;
+                    }
+                    node = node.get_parent?.();
+                }
+            }
+
+            const onSettleComplete = () => {
+                if (dash && dash._pulsarPointerInDock) {
+                    try {
+                        dash._pulsarReapplyMagnification();
+                    } catch {}
+                } else {
+                    try {
+                        if (dash && magnified) {
+                            dash._pulsarCleanupClone(this);
+                        } else if (magnified) {
+                            magnified.destroy();
+                            this._pulsarMagnifyClone = null;
+                            if (this.icon)
+                                this.icon.opacity = 255;
+                        } else if (this.icon) {
+                            this.icon.opacity = 255;
+                        }
+                    } catch {}
+                }
+            };
+
             // The actor may have been destroyed while bouncing
             try {
                 if (target && !target.is_finalized?.() && target.get_stage?.()) {
@@ -865,9 +915,14 @@ export const DockAbstractAppIcon = GObject.registerClass({
                         scale_y: 1,
                         duration: 220,
                         mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                        onComplete: onSettleComplete,
                     });
+                } else {
+                    onSettleComplete();
                 }
-            } catch {}
+            } catch {
+                onSettleComplete();
+            }
         };
 
         const runBounceCycle = () => {
@@ -880,6 +935,9 @@ export const DockAbstractAppIcon = GObject.registerClass({
                 settle();
                 return;
             }
+
+            if (magnified && this.icon && this.icon.opacity !== 0)
+                this.icon.opacity = 0;
 
             // Slow, constant rhythm while waiting for the app to open
             const riseTime = 1050;
@@ -970,8 +1028,16 @@ export const DockAbstractAppIcon = GObject.registerClass({
         }
 
         this._windowsChangedId = this.app.connect('windows-changed', () => {
-            console.log('[pulsar-dbg] settle windows-changed');
+            // Disconnect here: settle() zeroes the id via stopWatching(),
+            // and if the id is already 0 the connection would leak and fire
+            // again on every future windows-changed of this app.
+            const signalId = this._windowsChangedId;
             this._windowsChangedId = 0;
+            try {
+                this.app.disconnect(signalId);
+            } catch {
+                // The app may already be gone
+            }
             settle();
         });
 
@@ -981,7 +1047,6 @@ export const DockAbstractAppIcon = GObject.registerClass({
         // change means the click did its job.
         this._focusWatchId = global.display.connect(
             'notify::focus-window', () => {
-                console.log('[pulsar-dbg] settle focus');
                 settle();
             });
 
@@ -2138,6 +2203,13 @@ export function itemShowLabel() {
     this.label.opacity = 0;
     this.label.show();
 
+    // Ensure the label actor is raised to the very top above all icons and backgrounds
+    if (this.label.get_parent()) {
+        try {
+            this.label.get_parent().set_child_above_sibling(this.label, null);
+        } catch (e) {}
+    }
+
     const [stageX, stageY] = this.get_transformed_position();
     const node = this.label.get_theme_node();
 
@@ -2147,31 +2219,44 @@ export function itemShowLabel() {
     const labelWidth = this.label.get_width();
     const labelHeight = this.label.get_height();
 
+    // Account for hover magnification / scale so label is never obscured
+    let currentScale = 1.0;
+    if (this.scale_x && this.scale_x > 1.0)
+        currentScale = Math.max(currentScale, this.scale_x);
+    if (this.child && this.child.scale_x && this.child.scale_x > 1.0)
+        currentScale = Math.max(currentScale, this.child.scale_x);
+    if (this._scale && this._scale > 1.0)
+        currentScale = Math.max(currentScale, this._scale);
+    if (this.icon && this.icon.scale_x && this.icon.scale_x > 1.0)
+        currentScale = Math.max(currentScale, this.icon.scale_x);
+
+    const extraMargin = Math.max(0, Math.floor((itemHeight * (currentScale - 1)) / 2)) + 14;
+
     let x, y, xOffset, yOffset;
 
     const position = Utils.getPosition();
-    const labelOffset = node.get_length('-x-offset');
+    const labelOffset = node.get_length('-x-offset') || 0;
 
     switch (position) {
     case St.Side.LEFT:
         yOffset = Math.floor((itemHeight - labelHeight) / 2);
         y = stageY + yOffset;
-        xOffset = labelOffset;
+        xOffset = labelOffset + extraMargin;
         x = stageX + this.get_width() + xOffset;
         break;
     case St.Side.RIGHT:
         yOffset = Math.floor((itemHeight - labelHeight) / 2);
         y = stageY + yOffset;
-        xOffset = labelOffset;
+        xOffset = labelOffset + extraMargin;
         x = Math.round(stageX) - labelWidth - xOffset;
         break;
     case St.Side.TOP:
-        y = stageY + labelOffset + itemHeight;
+        y = stageY + labelOffset + itemHeight + extraMargin;
         xOffset = Math.floor((itemWidth - labelWidth) / 2);
         x = stageX + xOffset;
         break;
     case St.Side.BOTTOM:
-        yOffset = labelOffset;
+        yOffset = labelOffset + extraMargin;
         y = stageY - labelHeight - yOffset;
         xOffset = Math.floor((itemWidth - labelWidth) / 2);
         x = stageX + xOffset;
@@ -2179,15 +2264,15 @@ export function itemShowLabel() {
     }
 
     // keep the label inside the screen border
-    // Only needed fot the x coordinate.
-
     // Leave a few pixel gap
     const gap = 5;
     const monitor = Main.layoutManager.findMonitorForActor(this);
-    if (x - monitor.x < gap)
-        x += monitor.x - x + labelOffset;
-    else if (x + labelWidth > monitor.x + monitor.width - gap)
-        x -= x + labelWidth - (monitor.x + monitor.width) + gap;
+    if (monitor) {
+        if (x - monitor.x < gap)
+            x = monitor.x + gap;
+        else if (x + labelWidth > monitor.x + monitor.width - gap)
+            x = monitor.x + monitor.width - labelWidth - gap;
+    }
 
     this.label.remove_all_transitions();
     this.label.set_position(x, y);

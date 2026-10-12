@@ -283,9 +283,9 @@ export const DockDash = GObject.registerClass({
             clip_to_allocation: false,
             x_align: Clutter.ActorAlign.CENTER,
             y_align: Clutter.ActorAlign.CENTER,
-            vertical: !this._isHorizontal,
-            y_expand: this._isHorizontal,
-            x_expand: !this._isHorizontal,
+            orientation: !this._isHorizontal ? Clutter.Orientation.VERTICAL : Clutter.Orientation.HORIZONTAL,
+            y_expand: false,
+            x_expand: false,
         });
 
         this._scrollView = new St.ScrollView({
@@ -293,8 +293,8 @@ export const DockDash = GObject.registerClass({
             clip_to_allocation: false,
             hscrollbar_policy: this._isHorizontal ? St.PolicyType.EXTERNAL : St.PolicyType.NEVER,
             vscrollbar_policy: this._isHorizontal ?  St.PolicyType.NEVER : St.PolicyType.EXTERNAL,
-            x_expand: this._isHorizontal,
-            y_expand: !this._isHorizontal,
+            x_expand: false,
+            y_expand: false,
             enable_mouse_scrolling: false,
         });
 
@@ -312,7 +312,7 @@ export const DockDash = GObject.registerClass({
             clip_to_allocation: false,
             x_align: Clutter.ActorAlign.FILL,
             y_align: Clutter.ActorAlign.FILL,
-            vertical: !this._isHorizontal,
+            orientation: !this._isHorizontal ? Clutter.Orientation.VERTICAL : Clutter.Orientation.HORIZONTAL,
             reactive: true,
         });
         this._boxContainer.add_style_class_name(Theming.PositionStyleClass[this._position]);
@@ -325,19 +325,37 @@ export const DockDash = GObject.registerClass({
             this._pulsarPointerInDock = false;
             this._pulsarPointerX = null;
             this._pulsarPointerY = null;
-            this._resetMagnification('leave');
+            this._resetMagnification();
             return Clutter.EVENT_PROPAGATE;
+        });
+
+        // Keep magnification in sync with the dock sliding away/back
+        // (autohide/intellihide): without this, floating clones stay at
+        // their last pose while the dock (and its real icons) move away,
+        // leaving a static duplicate on screen.
+        const dockManager = Docking.DockManager.getDefault();
+        this._pulsarDockHideId = dockManager.connect('hiding', () => {
+            this._resetMagnification();
+        });
+        this._pulsarDockShowId = dockManager.connect('showing', () => {
+            this._pulsarReapplyMagnification();
+        });
+        this.connect('destroy', () => {
+            try {
+                dockManager.disconnect(this._pulsarDockHideId);
+                dockManager.disconnect(this._pulsarDockShowId);
+            } catch {}
         });
 
         const rtl = Clutter.get_default_text_direction() === Clutter.TextDirection.RTL;
         this._box = new St.BoxLayout({
-            vertical: !this._isHorizontal,
+            orientation: !this._isHorizontal ? Clutter.Orientation.VERTICAL : Clutter.Orientation.HORIZONTAL,
             clip_to_allocation: false,
             ...!this._isHorizontal ? {layout_manager: new DockDashIconsVerticalLayout()} : {},
             x_align: rtl ? Clutter.ActorAlign.END : Clutter.ActorAlign.START,
             y_align: this._isHorizontal ? Clutter.ActorAlign.CENTER : Clutter.ActorAlign.START,
-            y_expand: !this._isHorizontal,
-            x_expand: this._isHorizontal,
+            y_expand: false,
+            x_expand: false,
         });
         this._box._delegate = this;
         this._boxContainer.add_child(this._box);
@@ -790,7 +808,7 @@ export const DockDash = GObject.registerClass({
 
     _pulsarUpdateMagnification(pointerX, pointerY) {
         if (!Docking.DockManager.settings.dockMagnification) {
-            this._resetMagnification('motion-off');
+            this._resetMagnification();
             return;
         }
         const maxFactor =
@@ -917,12 +935,6 @@ export const DockDash = GObject.registerClass({
                 }
 
                 const originalVisual = data.icon.icon ?? sourceActor;
-
-                if (data.icon._pulsarDbgHidden) {
-                    console.log(`[pulsar-dbg] reveal ${data.icon.app?.get_id?.() ?? '?'} scale=${data.scale.toFixed(3)} bnc=${!!data.icon._bouncing} map=${!!data.icon.mapped}`);
-                    data.icon._pulsarDbgHidden = false;
-                }
-
                 originalVisual.opacity = 255;
 
                 return;
@@ -932,6 +944,14 @@ export const DockDash = GObject.registerClass({
 
             let clone =
                 this._pulsarMagnificationClones.get(data.icon);
+
+            // The launch press/bounce is running on the real dock icon (its
+            // clone was torn down right before the click). Don't swap in a
+            // brand-new 0×0 clone and hide the bouncing icon — that would
+            // make the icon vanish mid-bounce. Leave the real icon visible;
+            // the launch settle re-runs this update and poses the clone.
+            if (!clone && data.icon._bouncing)
+                return;
 
             if (!clone) {
                 clone = new Clutter.Clone({
@@ -952,7 +972,18 @@ export const DockDash = GObject.registerClass({
                 // animation presses and bounces *it* instead of the hidden
                 // real icon, so the click never shows a second copy.
                 data.icon._pulsarMagnifyClone = clone;
+
+                // Back-ref so the app icon can ask the dock to re-run the
+                // magnification update itself (e.g. once a launch
+                // press/bounce settles while hovering).
+                data.icon._pulsarDash = this;
             }
+
+            // Keep the back-ref in sync even when the clone survived a
+            // reveal pass (the reveal branch nulls the back-ref while the
+            // clone stays in the map): the launch animation must always
+            // pick the live floating clone as its bounce target.
+            data.icon._pulsarMagnifyClone = clone;
 
             if (!data.icon._bouncing) {
                 // While a launch press/bounce runs on the clone, it owns the
@@ -1006,9 +1037,37 @@ export const DockDash = GObject.registerClass({
             // Keep the dock item itself alive so hover/click/layout still work.
             const originalVisual = data.icon.icon ?? sourceActor;
 
-            if (!data.icon._pulsarDbgHidden) {
-                console.log(`[pulsar-dbg] hide ${data.icon.app?.get_id?.() ?? '?'} dclone=${!!data.icon._pulsarMagnifyClone} bnc=${!!data.icon._bouncing} map=${!!data.icon.mapped}`);
-                data.icon._pulsarDbgHidden = true;
+            // While a magnified clone stands in for this icon, the real dock
+            // icon must stay hidden. Normally the motion pass below hides it,
+            // but other paths (a dock rebuild, a spurious leave/reset race)
+            // can restore it to 255 for a frame, which shows the real icon
+            // underneath the lifted clone: the click "duplicate". This guard
+            // re-hides it whenever it is revealed while a visible clone (or a
+            // launch bounce) owns the icon.
+            //
+            // `_pulsarResetting` stands the guard down during
+            // _resetMagnification: there we intentionally restore the real
+            // icons before destroying their clones, and without the flag the
+            // guard would re-hide them just before the clones vanish, leaving
+            // the icons invisible on screen.
+            if (!data.icon._pulsarOpWatched) {
+                data.icon._pulsarOpWatched = true;
+                try {
+                    originalVisual.connect('notify::opacity', () => {
+                        if (this._pulsarResetting)
+                            return;
+                        if (originalVisual.opacity !== 0 &&
+                            (data.icon._bouncing || (data.icon._pulsarMagnifyClone &&
+                             !data.icon._pulsarMagnifyClone.is_finalized?.() &&
+                             data.icon._pulsarMagnifyClone.visible))) {
+                            try {
+                                console.log(`[pulsar-dock-dbg] guard re-hid op=${originalVisual.opacity} bounce=${data.icon._bouncing} vis=${data.icon._pulsarMagnifyClone?.visible}`);
+                                console.log(new Error('guard').stack);
+                            } catch {}
+                            originalVisual.opacity = 0;
+                        }
+                    });
+                } catch {}
             }
 
             originalVisual.opacity = 0;
@@ -1019,7 +1078,7 @@ export const DockDash = GObject.registerClass({
 
         // Hide clones that are no longer inside the magnification radius.
         for (const [icon, clone] of this._pulsarMagnificationClones) {
-            if (!active.has(icon))
+            if (!active.has(icon) && !icon._bouncing)
                 clone.hide();
         }
     }
@@ -1040,19 +1099,40 @@ export const DockDash = GObject.registerClass({
             this._pulsarPointerX, this._pulsarPointerY);
     }
 
-    _resetMagnification(reason = 'unknown') {
+    _pulsarCleanupClone(icon) {
+        if (!this._pulsarMagnificationClones)
+            return;
+        const clone = this._pulsarMagnificationClones.get(icon);
+        if (clone) {
+            this._pulsarMagnificationClones.delete(icon);
+            clone.destroy();
+        }
+        if (icon._pulsarMagnifyClone === clone)
+            icon._pulsarMagnifyClone = null;
+        const visual = icon.icon ?? (icon.icon?._iconBin ?? icon);
+        if (visual)
+            visual.opacity = 255;
+    }
+
+    _resetMagnification() {
         const appIcons = this.getAppIcons();
 
-        console.log(`[pulsar-dbg] reset reason=${reason} clones=${this._pulsarMagnificationClones?.size ?? 0}`);
+        // See the opacity guard in _pulsarUpdateMagnification: it must stand
+        // down while we deliberately restore the icons below, otherwise it
+        // re-hides each real icon right before its clone is destroyed.
+        this._pulsarResetting = true;
 
         appIcons.forEach(icon => {
+            if (icon._bouncing)
+                return;
+
             const sourceActor =
                 icon.icon?._iconBin ??
                 icon.icon ??
                 icon._previewBin ??
                 icon;
 
-            for (const actor of [icon, sourceActor]) {
+            for (const actor of [icon, sourceActor, icon.icon]) {
                 if (!actor)
                     continue;
 
@@ -1071,14 +1151,26 @@ export const DockDash = GObject.registerClass({
 
         if (this._pulsarMagnificationClones) {
             for (const [icon, clone] of this._pulsarMagnificationClones) {
+                if (icon._bouncing) {
+                    clone.ease({
+                        scale_x: 1.0,
+                        scale_y: 1.0,
+                        translation_x: 0,
+                        duration: 120,
+                        mode: Clutter.AnimationMode.EASE_OUT_QUAD,
+                    });
+                    continue;
+                }
+
                 if (icon._pulsarMagnifyClone === clone)
                     icon._pulsarMagnifyClone = null;
 
                 clone.destroy();
+                this._pulsarMagnificationClones.delete(icon);
             }
-
-            this._pulsarMagnificationClones.clear();
         }
+
+        this._pulsarResetting = false;
     }
 
     /**
@@ -1419,28 +1511,29 @@ export const DockDash = GObject.registerClass({
         }
 
         for (let i = 0; i < addedItems.length; i++) {
-            console.log(`[pulsar-dbg] redisplay add ${addedItems[i].app.get_id?.() ?? '?'}`);
             this._box.insert_child_at_index(addedItems[i].item,
                 addedItems[i].pos);
         }
 
         for (let i = 0; i < removedActors.length; i++) {
             const item = removedActors[i];
-            const delegate = item.child?._delegate;
 
-            if (delegate) {
-                console.log(`[pulsar-dbg] redisplay rem ${delegate.app?.get_id?.() ?? '?'} clone=${!!delegate._pulsarMagnifyClone} bnc=${!!delegate._bouncing}`);
+            // The magnification map is keyed by the AppIcon (actor.child),
+            // not by the DashItemContainer delegate: look clones up with
+            // item.child, otherwise the orphan cleanup never fires.
+            const icon = item.child;
 
+            if (icon) {
                 // The item is leaving the dock; if a magnified clone of it
                 // was floating in Main.uiGroup, destroy it now — otherwise
                 // it stays behind as an orphan duplicate while the rebuilt
                 // icon shows its (visible) real widget below the floating
                 // clone.
-                const orphan = this._pulsarMagnificationClones?.get(delegate);
+                const orphan = this._pulsarMagnificationClones?.get(icon);
                 if (orphan) {
                     orphan.destroy();
-                    this._pulsarMagnificationClones.delete(delegate);
-                    delegate._pulsarMagnifyClone = null;
+                    this._pulsarMagnificationClones.delete(icon);
+                    icon._pulsarMagnifyClone = null;
                 }
             }
 
